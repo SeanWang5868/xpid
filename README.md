@@ -32,19 +32,15 @@ xpid ./data
 
 ## Geometric Criteria
 
-Definitions: $C_\pi$ (Ring Centroid), $\vec{n}$ (Ring Normal), $X$ (Donor Heavy Atom), $H$ (Hydrogen).
+Definitions: $C_\pi$ (Ring Centroid), $\vec{n}$ (Ring Normal), $X$ (Donor Heavy Atom), $Xp$ (The projection of X onto the \pi plane), $H$ (Hydrogen).
 
 ### [Hudson System](https://doi.org/10.1021/jacs.5b08424)
 
-1.  **Distance** ($d_{X \text{--} C_\pi}$): $\le 4.5$ Å
-2.  **Tilt Angle** ($\angle X\text{--}H \text{--} \vec{n}$): Angle between vector $\vec{XH}$ and normal $\vec{n}$ $\le 40^\circ$.
-3.  **Planar Offset**: The projection of $X$ onto the ring plane must lie within the ring radius ($< 1.6 \text{--} 2.0$ Å).
+$d_{X \text{--} C_\pi}$: $\le 4.5$ Å, $\angle X\text{--}H \text{--} \vec{n}$): $\le 40^\circ$. $d_{Xp \text{--} C_\pi}$ <=1.6 Å for His and Trp_A, ≤ 2.0 Å for Phe, Trp_B, Tyr
 
 ### [Plevin System](https://doi.org/10.1038/nchem.650)
 
-1.  **Distance** ($d_{X \text{--} C_\pi}$): $< 4.3$ Å
-2.  **Directionality** ($\angle X\text{--}H \text{--} C_\pi$): $> 120^\circ$.
-3.  **Displacement** ($\angle X \text{--} C_\pi \text{--} \vec{n}$): Angle between vector $\vec{C_\pi X}$ and normal $\vec{n}$ $< 25^\circ$.
+$d_{X \text{--} C_\pi}$: $< 4.3$ Å, $\angle X\text{--}H \text{--} C_\pi$: $> 120^\circ$, $\angle X \text{--} C_\pi \text{--} \vec{n}$): $< 25^\circ$.
 
 ## Command Options
 
