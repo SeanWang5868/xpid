@@ -1,9 +1,0 @@
-Metadata-Version: 2.4
-Name: xhpi
-Version: 1.0.0
-Summary: XH-pi interactions detector in protein structures.
-Requires-Python: >=3.9
-Requires-Dist: gemmi
-Requires-Dist: pandas
-Requires-Dist: tqdm
-Requires-Dist: numpy

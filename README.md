@@ -1,108 +1,101 @@
-\documentclass[a4paper,11pt]{article}
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage{geometry}
-\usepackage{listings}
-\usepackage{xcolor}
-\usepackage{hyperref}
-\usepackage{booktabs}
-\usepackage{amsmath}
+# xpid
 
-% Page Setup
-\geometry{margin=1in}
-\setlength{\parindent}{0pt}
-\setlength{\parskip}{0.5em}
+**XH-pi interactions detector for protein structures.**
 
-% Code Style
-\definecolor{codegray}{gray}{0.9}
-\lstset{
-    backgroundcolor=\color{codegray},
-    basicstyle=\ttfamily\small,
-    breaklines=true,
-    frame=single,
-    framerule=0pt,
-    framesep=5pt,
-    columns=fullflexible
-}
+`xpid` is a Gemmi-based tool designed to detect XH-$\pi$ interactions in PDB/mmCIF files.
 
-\title{\textbf{XH-pi}: XH-pi interactions detector}
-\author{}
-\date{}
+## Installation
 
-\begin{document}
+Requires Python 3.9+.
 
-\maketitle
-
-\section*{Introduction}
-\textbf{XH-pi} is a high-performance CLI tool designed for the automated detection of XH--$\pi$ interactions in protein structures (PDB/CIF). It features an integrated topology preparation pipeline (using Gemmi), supports recursive directory scanning, and utilizes efficient geometric algorithms based on \textit{Hudson} and \textit{Plevin} criteria.
-
-\section*{Features}
-\begin{itemize}
-    \item \textbf{Automated Hydrogen Addition}: In-memory topology preparation via Gemmi.
-    \item \textbf{High Performance}: Parallel processing with multi-core support.
-    \item \textbf{Flexible Input}: Handles single files or recursive directory scans.
-    \item \textbf{Dual Criteria}: Supports both Hudson and Plevin geometric definitions.
-    \item \textbf{Industrial Output}: JSON (default) or CSV formats; customizable output directories.
-\end{itemize}
-
-\section*{Installation}
-Ensure you have Python 3.9+ installed.
-
-\begin{lstlisting}[language=bash]
-git clone https://github.com/yourusername/xhpi.git
-cd xhpi
+```bash
+git clone <your-repo-url>
+cd xpid
 pip install .
-\end{lstlisting}
+```
 
-\section*{Quick Start}
+## Configuration
 
-\subsection*{1. Configure Environment (Optional)}
-Set the default path to your Monomer Library (e.g., CCP4 monomers) for permanent usage.
-\begin{lstlisting}[language=bash]
-xhpi --set-mon-lib /path/to/monomers/
-\end{lstlisting}
+The detection of XH-π interactions depends on the position of H atoms. In order to add H to the structure before detecting, the path to the monomer library (e.g. CCP4 monomer library) needs to be specified.
 
-\subsection*{2. Run Analysis}
-Process all \texttt{.cif} files in a directory recursively and save results to JSON.
-\begin{lstlisting}[language=bash]
-xhpi ./data_directory
-\end{lstlisting}
+```bash
+xpid --set-mon-lib /Users/abc123/monomers
+```
 
-\subsection*{3. Advanced Usage}
-Process specific files, use 8 cores, apply "Remove & Re-add" hydrogen mode, and export as CSV.
-\begin{lstlisting}[language=bash]
-xhpi ./data/*.cif --jobs 8 --h-mode 3 --file-type csv --out-dir ./results
-\end{lstlisting}
+## Quick Start
 
-\section*{Parameters}
+Scans a directory or PDB/mmCIF file and save results into a JSON file.
 
-\begin{table}[h]
-\centering
-\begin{tabular}{@{}ll@{}}
-\toprule
-\textbf{Option} & \textbf{Description} \\ \midrule
-\texttt{<PATH>} & Input files (.cif) or directories to scan recursively. \\
-\texttt{--set-mon-lib <DIR>} & Set the default Monomer Library path permanently. \\
-\texttt{--mon-lib <DIR>} & Override the library path for the current run. \\
-\texttt{--out-dir <DIR>} & Specify a central directory for output files. \\
-\texttt{--file-type <STR>} & Output format: \texttt{json} (default) or \texttt{csv}. \\
-\texttt{--jobs <NUM>} & Number of parallel CPU cores (Default: 1). \\
-\texttt{--h-mode <NUM>} & Hydrogen handling strategy (see below). \\ \bottomrule
-\end{tabular}
-\end{table}
+```bash
+xpid ./data
+```
 
-\subsection*{Hydrogen Modes (--h-mode)}
-Default is \textbf{4}.
-\begin{itemize}
-    \item \texttt{0}: NoChange (Keep existing H)
-    \item \texttt{1}: Shift (Move H to standard positions)
-    \item \texttt{2}: Remove (Remove all H)
-    \item \texttt{3}: ReAdd (Remove and re-add all)
-    \item \texttt{4}: ReAddButWater (Re-add all except water)
-    \item \texttt{5}: ReAddKnown (Only for known residues)
-\end{itemize}
+> **Output**: `./data/xpid_output/xpid_results.json`
 
-\section*{License}
-MIT License.
+## Geometric Criteria
 
-\end{document}
+Definitions: $C_\pi$ (Ring Centroid), $\vec{n}$ (Ring Normal), $X$ (Donor Heavy Atom), $H$ (Hydrogen).
+
+### [Hudson System](https://doi.org/10.1021/jacs.5b08424)
+
+1.  **Distance** ($d_{X \text{--} C_\pi}$): $\le 4.5$ Å
+2.  **Tilt Angle** ($\angle X\text{--}H \text{--} \vec{n}$): Angle between vector $\vec{XH}$ and normal $\vec{n}$ $\le 40^\circ$.
+3.  **Planar Offset**: The projection of $X$ onto the ring plane must lie within the ring radius ($< 1.6 \text{--} 2.0$ Å).
+
+### [Plevin System](https://doi.org/10.1038/nchem.650)
+
+1.  **Distance** ($d_{X \text{--} C_\pi}$): $< 4.3$ Å
+2.  **Directionality** ($\angle X\text{--}H \text{--} C_\pi$): $> 120^\circ$.
+3.  **Displacement** ($\angle X \text{--} C_\pi \text{--} \vec{n}$): Angle between vector $\vec{C_\pi X}$ and normal $\vec{n}$ $< 25^\circ$.
+
+## Command Options
+
+| Argument | Description |
+| :--- | :--- |
+| `inputs` | Input file (`.cif`, `.pdb`) or directory path. |
+| `--out-dir` | Specify custom output directory. |
+| `--separate` | Save results as separate files per PDB (Default: Merge). |
+| `--file-type` | Output format: `json` (default) or `csv`. |
+| `-v`, `--verbose` | Output detailed metrics (angles, coords, B-factors). |
+| `--log` | Enable log file saving. |
+| `--jobs N` | Number of CPU cores to use (Default: 1). |
+| `--h-mode N` | Hydrogen handling mode (0=NoChange, 4=ReAddButWater). |
+| `--model ID` | Model index to analyze (Default: `0`; use `all` for NMR). |
+
+**Filters:**
+
+  * `--pi-res`: Limit acceptor residues (e.g., `TRP,TYR`).
+  * `--donor-res`: Limit donor residues (e.g., `HIS,ARG`).
+  * `--donor-atom`: Limit donor element types (e.g., `N,O`).
+
+
+## Output Data
+
+**Simple Mode (Default)**
+
+  * **Metadata**: PDB ID, Resolution
+  * **Residue Info**: Chain, Name, ID for both X-donor and $\pi$ Residues.
+  * **Geometry**: Distance (X to $\pi$-center)
+
+**Detailed Mode (`-v`)**
+
+  * **Includes all Simple fields plus:**
+  * **Secondary Structure**: Type (H/G/I/E/C) and Region IDs.
+  * **Coordinates**: Flattened x, y, z for $\pi$-center and X-atom.
+  * **Angles**: $\theta$, $\angle XH-\pi$, $\angle X-\pi-Normal$.
+  * **B-factors**: Average B-factor for ring atoms and X-atom.
+
+## Dependencies
+
+  * `gemmi`
+  * `numpy`
+
+-----
+
+## Contact
+
+**Sean Wang** (sean.wang@york.ac.uk)
+
+York Structural Biology Laboratory (YSBL)
+Department of Chemistry, University of York
+Heslington, York, YO10 5DD, UK

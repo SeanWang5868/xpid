@@ -3,16 +3,25 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "xhpi"
-version = "1.0.0"
-description = "XH-pi interactions detector in protein structures."
+name = "xpid"
+version = "2.1.0"
+description = "Industrial-grade detector for XH-pi interactions in protein structures."
+readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "gemmi",
-    "pandas",
-    "tqdm",
     "numpy"
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest"
+]
+
 [project.scripts]
-xhpi = "xhpi.cli:main"
+xpid = "xpid.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["xpid*"]
+namespaces = false

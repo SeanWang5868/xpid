@@ -1,4 +1,0 @@
-gemmi
-pandas
-tqdm
-numpy

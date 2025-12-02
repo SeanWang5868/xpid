@@ -1,30 +1,36 @@
+"""
+geometry.py
+Geometric calculations for distance, angles, and vector projections.
+"""
 import numpy as np
 import gemmi
+from typing import Tuple, Optional, List
 
-def get_pi_info(atoms):
-    """计算 Pi 系统的中心、法向量(SVD拟合)和平均 B-factor"""
+def get_pi_info(atoms: List[gemmi.Atom]) -> Tuple[gemmi.Position, np.ndarray, np.ndarray, float]:
+    """
+    Calculates Pi-system center, normal vector (via SVD), and mean B-factor.
+    """
     positions = np.array([atom.pos.tolist() for atom in atoms])
     
-    # 1. 几何中心
+    # 1. Geometric Center
     center_array = np.mean(positions, axis=0)
     pi_center = gemmi.Position(*center_array)
     
-    # 2. 平均 B-factor
+    # 2. Mean B-factor
     b_mean = sum(atom.b_iso for atom in atoms) / len(atoms)
     
-    # 3. 法向量 (SVD 拟合平面)
+    # 3. Normal Vector (SVD Fitting)
     centered_pos = positions - center_array
-    u, s, vh = np.linalg.svd(centered_pos)
-    # vh 的最后一行对应最小奇异值，即平面的法向量
-    normal_vector = vh[2, :]
+    _, _, vh = np.linalg.svd(centered_pos)
+    normal_vector = vh[2, :] # The vector corresponding to the smallest singular value
     
     return pi_center, center_array, normal_vector, b_mean
 
-def calculate_distance(pos1_array, pos2_array):
+def calculate_distance(pos1_array: np.ndarray, pos2_array: np.ndarray) -> float:
     return np.linalg.norm(pos1_array - pos2_array)
 
-def calculate_xpcn_angle(x_pos, pi_center, pi_normal):
-    """Plevin: X-PiCenter 向量与法向量的夹角"""
+def calculate_xpcn_angle(x_pos: np.ndarray, pi_center: np.ndarray, pi_normal: np.ndarray) -> Optional[float]:
+    """Plevin: Angle between X-PiCenter vector and Normal vector."""
     v_x_pi = pi_center - x_pos
     norm_v = np.linalg.norm(v_x_pi)
     norm_n = np.linalg.norm(pi_normal)
@@ -39,8 +45,8 @@ def calculate_xpcn_angle(x_pos, pi_center, pi_normal):
         angle = 180 - angle
     return angle
 
-def calculate_xh_picenter_angle(pi_center, x_pos, h_pos):
-    """Plevin: XH 向量与 X-PiCenter 向量的夹角"""
+def calculate_xh_picenter_angle(pi_center: np.ndarray, x_pos: np.ndarray, h_pos: np.ndarray) -> Optional[float]:
+    """Plevin: Angle between X-H vector and X-PiCenter vector."""
     v_hx = h_pos - x_pos
     v_hc = h_pos - pi_center 
     
@@ -52,15 +58,15 @@ def calculate_xh_picenter_angle(pi_center, x_pos, h_pos):
     cos_theta = np.clip(np.dot(v_hx, v_hc) / (norm_hx * norm_hc), -1.0, 1.0)
     return np.degrees(np.arccos(cos_theta))
 
-def calculate_hudson_theta(pi_center, x_pos, h_pos, normal):
-    """Hudson: XH 向量与法向量的夹角 (前提: 投影指向环内)"""
+def calculate_hudson_theta(pi_center: np.ndarray, x_pos: np.ndarray, h_pos: np.ndarray, normal: np.ndarray) -> Optional[float]:
+    """Hudson: Angle between X-H vector and Normal vector (checking projection direction)."""
     v_x_pi = pi_center - x_pos
     v_xh = h_pos - x_pos
     
     norm_xpi = np.linalg.norm(v_x_pi)
     if norm_xpi == 0: return None
 
-    # 投影检查
+    # Projection check: H must point towards the ring
     proj_len = np.dot(v_xh, v_x_pi) / norm_xpi
     
     if proj_len > 0:
@@ -76,8 +82,8 @@ def calculate_hudson_theta(pi_center, x_pos, h_pos, normal):
         return angle
     return None
 
-def calculate_projection_dist(normal, pi_center, x_pos):
-    """Hudson: 投影距离"""
+def calculate_projection_dist(normal: np.ndarray, pi_center: np.ndarray, x_pos: np.ndarray) -> Optional[float]:
+    """Hudson: Distance from the Pi center to the projection of X onto the plane."""
     numerator = np.dot(normal, pi_center - x_pos)
     denominator = np.dot(normal, normal)
     if denominator == 0: return None
