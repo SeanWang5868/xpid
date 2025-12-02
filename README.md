@@ -1,8 +1,8 @@
 # xpid
 
-**XH-$\pi$ interactions detector for protein structures.**
+**XH-π interactions detector for protein structures.**
 
-`xpid` is a Gemmi-based tool designed to detect XH-$\pi$ interactions in PDB/mmCIF files.
+`xpid` is a Gemmi-based tool designed to detect XH-π interactions in PDB/mmCIF files.
 
 ## Installation
 
@@ -16,7 +16,7 @@ pip install .
 
 ## Configuration
 
-The detection of XH-$\pi$ interactions depends on the position of H atoms. In order to add H to the structure before detecting, the path to the monomer library (e.g. CCP4 monomer library) needs to be specified.
+The detection of XH-π interactions depends on the position of H atoms. In order to add H to the structure before detecting, the path to the monomer library (e.g. CCP4 monomer library) needs to be specified.
 
 ```bash
 xpid --set-mon-lib /Users/abc123/monomers
@@ -61,28 +61,25 @@ Definitions: $C_\pi$ (Ring Centroid), $\vec{n}$ (Ring Normal), $X$ (Donor Heavy 
 | `--jobs N` | Number of CPU cores to use (Default: 1). |
 | `--h-mode N` | Hydrogen handling mode (0=NoChange, 4=ReAddButWater). |
 | `--model ID` | Model index to analyze (Default: `0`; use `all` for NMR). |
-
-**Filters:**
-
-  * `--pi-res`: Limit acceptor residues (e.g., `TRP,TYR`).
-  * `--donor-res`: Limit donor residues (e.g., `HIS,ARG`).
-  * `--donor-atom`: Limit donor element types (e.g., `N,O`).
+| `--pi-res` | Limit acceptor residues (e.g., `TRP,TYR`). |
+| `--donor-res` | Limit donor residues (e.g., `HIS,ARG`). |
+| `--donor-atom` ｜ Limit donor element types (e.g., `N,O`). |
 
 
 ## Output Data
 
 **Simple Mode (Default)**
 
-  * **Metadata**: PDB ID, Resolution
-  * **Residue Info**: Chain, Name, ID for both X-donor and $\pi$ Residues.
-  * **Geometry**: Distance (X to $\pi$-center)
+  * PDB ID, Resolution
+  * Chain, Name, ID for X-donor and $\pi$ Residues.
+  * Distance ($d_{X \text{--} C_\pi}$)
 
 **Detailed Mode (`-v`)**
 
   * **Includes all Simple fields plus:**
   * **Secondary Structure**: Type (H/G/I/E/C) and Region IDs.
   * **Coordinates**: Flattened x, y, z for $\pi$-center and X-atom.
-  * **Angles**: $\theta$, $\angle XH-\pi$, $\angle X-\pi-Normal$.
+  * **Angles**: $\angle X\text{--}H \text{--} \vec{n}$, $\angle X\text{--}H \text{--} C_\pi$, $\angle X \text{--} C_\pi \text{--} \vec{n}$.
   * **B-factors**: Average B-factor for ring atoms and X-atom.
 
 ## Dependencies
