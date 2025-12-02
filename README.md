@@ -1,6 +1,6 @@
 # xpid
 
-**XH-pi interactions detector for protein structures.**
+**XH-$\pi$ interactions detector for protein structures.**
 
 `xpid` is a Gemmi-based tool designed to detect XH-$\pi$ interactions in PDB/mmCIF files.
 
@@ -9,14 +9,14 @@
 Requires Python 3.9+.
 
 ```bash
-git clone <your-repo-url>
+git clone [https://github.com/SeanWang5868/xpid](https://github.com/SeanWang5868/xpid)
 cd xpid
 pip install .
 ```
 
 ## Configuration
 
-The detection of XH-π interactions depends on the position of H atoms. In order to add H to the structure before detecting, the path to the monomer library (e.g. CCP4 monomer library) needs to be specified.
+The detection of XH-$\pi$ interactions depends on the position of H atoms. In order to add H to the structure before detecting, the path to the monomer library (e.g. CCP4 monomer library) needs to be specified.
 
 ```bash
 xpid --set-mon-lib /Users/abc123/monomers
@@ -96,6 +96,4 @@ Definitions: $C_\pi$ (Ring Centroid), $\vec{n}$ (Ring Normal), $X$ (Donor Heavy 
 
 **Sean Wang** (sean.wang@york.ac.uk)
 
-York Structural Biology Laboratory (YSBL)
-Department of Chemistry, University of York
-Heslington, York, YO10 5DD, UK
+York Structural Biology Laboratory (YSBL), University of York
