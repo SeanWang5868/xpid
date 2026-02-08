@@ -46,9 +46,9 @@ def calculate_xpcn_angle(x_pos: np.ndarray, pi_center: np.ndarray, pi_normal: np
     return angle
 
 def calculate_xh_picenter_angle(pi_center: np.ndarray, x_pos: np.ndarray, h_pos: np.ndarray) -> Optional[float]:
-    """Plevin: Angle between X-H vector and X-PiCenter vector."""
-    v_hx = h_pos - x_pos
-    v_hc = h_pos - pi_center 
+    """Plevin: Angle between X-H vector and H-PiCenter vector."""
+    v_hx = x_pos - h_pos
+    v_hc = pi_center - h_pos 
     
     norm_hx = np.linalg.norm(v_hx)
     norm_hc = np.linalg.norm(v_hc)

@@ -58,9 +58,8 @@ def add_hydrogens_memory(structure: gemmi.Structure,
                 try:
                     monlib.read_monomer_lib(mon_lib_path, missing_codes)
                 except Exception as e:
-                    logger.warning(f"Failed to load monomers {missing_codes}: {e}")
+                    logger.warning(f"Error reading monomers from lib: {e}")
             else:
-                # Fallback to Gemmi's internal library
                 pass
 
         # 4. Prepare Topology

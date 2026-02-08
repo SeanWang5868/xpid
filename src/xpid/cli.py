@@ -233,11 +233,13 @@ def get_parser():
     set_group.add_argument('--model', type=str, default="0", metavar='ID', help="Model index (0,1...) or 'all'. Default: 0.")
     set_group.add_argument('--mon-lib', type=str, metavar='DIR', help="Custom Monomer Library path.")
     set_group.add_argument('--set-mon-lib', type=str, metavar='DIR', help="Set default Monomer Library.")
+    set_group.add_argument('--show-mon-lib-config', action='store_true', help="Show current Monomer Library status.")
 
     filt_group = parser.add_argument_group("Filters")
     filt_group.add_argument('--pi-res', type=str, help="Limit Pi residues (TRP,TYR).")
     filt_group.add_argument('--donor-res', type=str, help="Limit Donor residues (HIS,ARG).")
     filt_group.add_argument('--donor-atom', type=str, help="Limit Donor elements (C,N,O,S).")
+
 
     return parser
 
@@ -248,12 +250,50 @@ def main():
     # 1. Config Mode
     if args.set_mon_lib:
         if os.path.isdir(args.set_mon_lib):
-            path = config.save_mon_lib_path(args.set_mon_lib)
-            print(f"Configuration saved: {path}")
-            sys.exit(0)
-        else:
+            input_path = args.set_mon_lib
+            success = config.save_mon_lib_path(input_path)
+            if success:
+                # 重新加载以获取规范化的路径
+                final_path = config.load_saved_mon_lib()
+                print(f"[SUCCESS] Monomer Library configured: {final_path}")
+                print(f"          Verified 'mon_lib_list.cif' exists.")
+                sys.exit(0)
+            else:
+                print(f"[ERROR] Invalid Monomer Library path: {input_path}")
+                print(f"        Could not find 'list/mon_lib_list.cif' in this directory or 'monomers' subdir.")
+                print(f"        Please check the path and try again.")
+                sys.exit(1)
+        else:  
             print(f"Error: Invalid path {args.set_mon_lib}")
             sys.exit(1)
+
+    if args.show_mon_lib_config:
+        saved_path = config.load_saved_mon_lib()
+        
+        print("Xpid Configuration Status")
+        
+        if saved_path:
+            print(f"Monomer Library Path : {saved_path}")
+            is_valid = False
+            if hasattr(config, 'validate_monomer_library'):
+                 is_valid = bool(config.validate_monomer_library(saved_path))
+            else:
+                 is_valid = os.path.exists(os.path.join(saved_path, "list", "mon_lib_list.cif")) \
+                            or os.path.exists(os.path.join(saved_path, "monomers", "list", "mon_lib_list.cif"))
+
+            if is_valid:
+                print(f"Status               : [VALID]")
+                print(f"Capability           : Full support for amino acids, Ligands & Non-standard residues.")
+            else:
+                print(f"Status               : [INVALID]")
+                print(f"Reason               : Path does not exist or missing 'mon_lib_list.cif'.")
+                print(f"Action Required      : Please use --set-mon-lib")
+        else:
+            print(f"Monomer Library Path : (Not Set)")
+            print(f"Status               : [INVALID]")
+            print(f"Action Required      : Please use --set-mon-lib")
+            
+        sys.exit(0)
 
     if not args.inputs:
         parser.print_help()
@@ -282,10 +322,27 @@ def main():
     logger.info("Scanning files...")
 
     # 4. Validation
-    mon_lib_path = args.mon_lib if args.mon_lib else config.DEFAULT_MON_LIB_PATH
-    if mon_lib_path and not os.path.isdir(mon_lib_path):
-        logger.error(f"Monomer Library path not found: {mon_lib_path}")
-        sys.exit(1)
+    final_mon_lib = args.mon_lib if args.mon_lib else config.DEFAULT_MON_LIB_PATH
+    
+    valid_lib_path = None
+    if final_mon_lib:
+        valid_lib_path = config.validate_monomer_library(final_mon_lib)
+        if not valid_lib_path and args.mon_lib:
+            logger.error(f"Provided Monomer Library path is invalid: {args.mon_lib}")
+            sys.exit(1)
+
+    print("-" * 60)
+    if valid_lib_path:
+        print(f"[LIBRARY] External Monomer Library Loaded")
+        print(f"          Path: {valid_lib_path}")
+        print(f"          -> Full support for Ligands & Non-standard residues.")
+    else:
+        print(f"[LIBRARY] Using Gemmi Internal Library (Standard Mode)")
+        print(f"          [NOTE] No external Monomer Library configured.")
+        print(f"          -> Standard amino acids (20) will be analyzed accurately.")
+        print(f"          -> Ligands or non-standard residues may lack hydrogens and be skipped.")
+    print("-" * 60)
+    mon_lib_path = valid_lib_path
 
     # 5. Filters
     filters = {

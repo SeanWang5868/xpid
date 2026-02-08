@@ -32,15 +32,25 @@ xpid ./data
 
 ## Geometric Criteria
 
-Definitions: $C_\pi$ (Ring Centroid), $\vec{n}$ (Ring Normal), $X$ (Donor Heavy Atom), $Xp$ (The projection of X onto the π plane), $H$ (Hydrogen).
+**Definitions:** * **C<sub>π</sub>**: Ring Centroid
+* **n**: Ring Normal Vector
+* **X**: Donor Heavy Atom
+* **X<sub>proj</sub>**: The projection of X onto the π plane
+* **H**: Hydrogen
 
 ### [Hudson System](https://doi.org/10.1021/jacs.5b08424)
 
-$d_{X \text{--} C_\pi}$: $\le 4.5$ Å, $\angle X\text{--}H \text{--} \vec{n}$): $\le 40^\circ$. $d_{Xp \text{--} C_\pi}$: $\le 1.6$ Å $\text{for His, Trp-A}$, $\le 2.0$ Å $\text{for Phe, Trp-B, Tyr}$.
+* **Distance (X &#x2d; C<sub>π</sub>)**: &le; 4.5 &#197;
+* **Angle (X &#x2d; H, n)**: &le; 40&deg;
+* **Distance (X<sub>proj</sub> &#x2d; C<sub>π</sub>)**: 
+    * &le; 1.6 &#197; (for His, Trp-A)
+    * &le; 2.0 &#197; (for Phe, Trp-B, Tyr)
 
 ### [Plevin System](https://doi.org/10.1038/nchem.650)
 
-$d_{X \text{--} C_\pi}$: $< 4.3$ Å, $\angle X\text{--}H \text{--} C_\pi$: $> 120^\circ$, $\angle X \text{--} C_\pi \text{--} \vec{n}$): $< 25^\circ$.
+* **Distance (X &#x2d; C<sub>π</sub>)**: < 4.3 &#197;
+* **Angle (X &#x2d; H &#x2d; C<sub>π</sub>)**: > 120&deg;
+* **Angle (X &#x2d; C<sub>π</sub>, n)**: < 25&deg;
 
 
 ## Command Options
@@ -53,9 +63,12 @@ $d_{X \text{--} C_\pi}$: $< 4.3$ Å, $\angle X\text{--}H \text{--} C_\pi$: $> 12
 | `--file-type` | Output format: `json` (default) or `csv`. |
 | `-v`, `--verbose` | Output detailed metrics (angles, coords, B-factors). |
 | `--log` | Enable log file saving. |
-| `--jobs N` | Number of CPU cores to use (Default: 1). |
 | `--h-mode N` | Hydrogen handling mode (0=NoChange, 4=ReAddButWater). |
+| `--jobs N` | Number of CPU cores to use (Default: 1). |
 | `--model ID` | Model index to analyze (Default: `0`; use `all` for NMR). |
+| `--mon-lib` | Custom Monomer Library path ("/Users/abc123/monomers"). |
+| `--set-mon-lib` | Set default Monomer Library ("/Users/abc123/monomers"). |
+| `--show-mon-lib-config` | Show current Monomer Library status. |
 | `--pi-res` | Limit acceptor residues (e.g., `TRP,TYR`). |
 | `--donor-res` | Limit donor residues (e.g., `HIS,ARG`). |
 | `--donor-atom` | Limit donor element types (e.g., `N,O`). |
