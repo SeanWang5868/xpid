@@ -7,14 +7,13 @@
 Requires Python 3.9+.
 
 ```bash
-git clone https://github.com/SeanWang5868/xpid
-cd xpid
-pip install .
+pip install xpid
 ```
 
 ## Configuration
 
-The detection of XH-π interactions depends on the position of H atoms. In order to add H to the structure before detecting, the path to the monomer library (e.g. CCP4 monomer library) needs to be specified.
+The detection of XH–π interactions depends on the positions of hydrogen atoms. To add hydrogens to the structure before detection, the path to a monomer library must be specified (e.g., the [CCP4 Monomer Library](https://github.com/MonomerLibrary/monomers)).
+
 
 ```bash
 xpid --set-mon-lib /Users/abc123/monomers
