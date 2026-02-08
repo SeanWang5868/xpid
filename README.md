@@ -1,6 +1,6 @@
 # Xpid
 
-`Xpid` is a Gemmi-based tool designed to detect XH-π interactions in PDB/mmCIF files.
+`Xpid` is a Gemmi-based tool to detect XH-π interactions in PDB/mmCIF files.
 
 ## Installation
 
@@ -29,12 +29,12 @@ xpid ./data
 
 > **Output**: `./data/xpid_output/xpid_results.json`
 
-## Geometric Criteria
+## Geometric Criteria (An XH–π interaction is recorded when at least one of the following set criteria is met.)
 
 **Definitions:** * **C<sub>π</sub>**: Ring Centroid
-* **n**: Ring Normal Vector
-* **X**: Donor Heavy Atom
-* **X<sub>proj</sub>**: The projection of X onto the π plane
+* **n**: π-Ring Normal Vector
+* **X**: Donor Atom
+* **X<sub>proj</sub>**: The projection of Donor Atom onto the π plane
 * **H**: Hydrogen
 
 ### [Hudson System](https://doi.org/10.1021/jacs.5b08424)
@@ -74,19 +74,22 @@ xpid ./data
 
 ## Output Data
 
-**Simple Mode (Default)**
+### Simple Mode (Default)
+* **Structure Info**: PDB ID, Resolution
+* **Residue Info**: Chain, Name, ID for X-donor and &pi; Residues
+* **Metric**: Distance (X &#x2d; C<sub>&pi;</sub>)
 
-  * PDB ID, Resolution
-  * Chain, Name, ID for X-donor and $\pi$ Residues.
-  * Distance ($d_{X \text{--} C_\pi}$)
+### Detailed Mode (-v)
+Includes all *Simple Mode* fields plus:
 
-**Detailed Mode (`-v`)**
-
-  * **Includes all Simple fields plus:**
-  * **Secondary structure**: Type (H/G/I/E/C) and Region IDs.
-  * **Coordinates**: Flattened x, y, z for $\pi$-center and X-atom.
-  * **Geometric parameters**: $\angle X\text{--}H \text{--} \vec{n}$, $\angle X\text{--}H \text{--} C_\pi$, $\angle X \text{--} C_\pi \text{--} \vec{n}$, $d_{Xp \text{--} C_\pi}$
-  * **B-factors**: Average B-factor for ring atoms and X-atom.
+* **Secondary Structure**: Type (H/G/I/E/C) and Region IDs
+* **Coordinates**: Flattened x, y, z for &pi;-center and X-atom
+* **Geometric Parameters**:
+    * Angle (X &#x2d; H, **n**)
+    * Angle (X &#x2d; H &#x2d; C<sub>&pi;</sub>)
+    * Angle (X &#x2d; C<sub>&pi;</sub>, **n**)
+    * Distance (X<sub>proj</sub> &#x2d; C<sub>&pi;</sub>)
+* **B-factors**: Average B-factor for ring atoms and X-atom
 
 ## Dependencies
 
