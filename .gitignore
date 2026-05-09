@@ -11,3 +11,4 @@ dui_install/
 
 dui_install/
 install_dui2_after_ccp4_w_curl.sh
+*.DS_Store
