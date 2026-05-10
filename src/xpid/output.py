@@ -8,9 +8,6 @@ import logging
 import sys
 from pathlib import Path
 from typing import List, Dict, Any
-import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 
 logger = logging.getLogger("xpid.output")
 
@@ -42,12 +39,16 @@ class ResultStreamer:
         # Validate parquet dependencies early
         if self.file_type == 'parquet':
             try:
+                import pandas as pd
+                import pyarrow as pa
+                import pyarrow.parquet as pq
 
+                self.pd = pd
                 self.pa = pa
                 self.pq = pq
             except ImportError:
                 logger.error("To use --file-type parquet, install 'pandas' and 'pyarrow'.")
-                logger.error("Try: pip install pandas pyarrow")
+                logger.error("Try: pip install 'xpid[parquet]'")
                 sys.exit(1)
 
     def __enter__(self):
@@ -93,7 +94,7 @@ class ResultStreamer:
 
         elif self.file_type == 'parquet':
 
-            df = pd.DataFrame(results)
+            df = self.pd.DataFrame(results)
             table = self.pa.Table.from_pandas(df if self.verbose else df[SIMPLE_COLS])
             if self.is_first_chunk:
                 self.parquet_writer = self.pq.ParquetWriter(self.output_path, table.schema)

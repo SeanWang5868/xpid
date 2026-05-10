@@ -3,33 +3,48 @@ prep.py
 Handles structure preparation and Hydrogen addition.
 """
 import gemmi
-import os
 import re
 import logging
+from pathlib import Path
 from typing import Optional
+
+from . import monlib
 
 logger = logging.getLogger("xpid.prep")
 _CACHED_MONLIB: Optional[gemmi.MonLib] = None
 _CACHED_LIB_PATH: Optional[str] = None
 
-def _get_shared_monlib(mon_lib_path: Optional[str], residue_names: set) -> gemmi.MonLib:
+def _get_shared_monlib(residue_names: set) -> gemmi.MonLib:
     global _CACHED_MONLIB, _CACHED_LIB_PATH
-    if _CACHED_MONLIB is None or _CACHED_LIB_PATH != mon_lib_path:
+    source_path = monlib.get_monomer_library_path()
+    cache_key = source_path
+
+    if _CACHED_MONLIB is None or _CACHED_LIB_PATH != cache_key:
         _CACHED_MONLIB = gemmi.MonLib()
-        _CACHED_LIB_PATH = mon_lib_path
-    monlib = _CACHED_MONLIB
-    if mon_lib_path:
-        missing = [c for c in residue_names if c not in monlib.monomers]
+        _CACHED_LIB_PATH = cache_key
+
+    gemmi_monlib = _CACHED_MONLIB
+
+    if source_path and monlib.is_monomer_library(Path(source_path)):
+        missing = [c for c in residue_names if c not in gemmi_monlib.monomers]
         if missing:
             try:
-                monlib.read_monomer_lib(mon_lib_path, missing)
-            except Exception:
-                pass
-    return monlib
+                gemmi_monlib.read_monomer_lib(source_path, missing)
+            except Exception as exc:
+                logger.warning(f"Could not read local monomer library {source_path}: {exc}")
+                for code in missing:
+                    cif_path = monlib.find_monomer_cif(code)
+                    if not cif_path:
+                        continue
+                    try:
+                        gemmi_monlib.read_monomer_cif(str(cif_path))
+                    except Exception as cif_exc:
+                        logger.warning(f"Could not read monomer {code} from {cif_path}: {cif_exc}")
 
-def add_hydrogens_memory(structure: gemmi.Structure, 
-                         mon_lib_path: Optional[str] = None, 
-                         h_change_val: int = 4) -> Optional[gemmi.Structure]:
+    return gemmi_monlib
+
+def add_hydrogens_memory(structure: gemmi.Structure,
+                         h_change_val: int = 4) -> gemmi.Structure:
     try:
         if h_change_val == 0: return structure
 
@@ -38,7 +53,7 @@ def add_hydrogens_memory(structure: gemmi.Structure,
             for chain in model:
                 for residue in chain: all_codes.add(residue.name)
         
-        monlib = _get_shared_monlib(mon_lib_path, all_codes)
+        monlib = _get_shared_monlib(all_codes)
 
         max_attempts = 10  # Maximum auto-removal retries for problematic residues
         for attempt in range(max_attempts):

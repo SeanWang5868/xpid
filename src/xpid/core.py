@@ -1,8 +1,8 @@
 """
 core.py
-Core logic for detecting XH-pi interactions using Dual-Track logic.
+Core logic for detecting XH-π interactions using Dual-Track logic.
 Track 1: Explicit H (Default)
-Track 2: Implicit/Cone rescue (Optional via use_cone=True)
+Track 2: Implicit/Cone rescue (enabled by default via use_cone=True)
 """
 import gemmi
 import logging
@@ -17,6 +17,10 @@ logger = logging.getLogger("xpid.core")
 def _pos_to_arr(pos: gemmi.Position) -> np.ndarray:
     """Convert gemmi.Position to numpy array without intermediate list."""
     return np.array([pos.x, pos.y, pos.z])
+
+
+def _round_float(value, ndigits: int):
+    return round(float(value), ndigits)
 
 
 class _RingContext(NamedTuple):
@@ -85,7 +89,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                      filter_donor: Optional[List[str]] = None,
                                      filter_donor_atom: Optional[List[str]] = None,
                                      model_mode: Union[str, int] = 0,
-                                     use_cone: bool = False,
+                                     use_cone: bool = True,
                                      min_occ: float = 0.0,
                                      external_ss_index: Optional[Dict] = None,
                                      sym_contacts: bool = False,
@@ -190,6 +194,8 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
     avg_pi_occ = sum(pi_occs) / len(pi_occs)
     if avg_pi_occ < 0.10:
         return []
+    if max_b > 0 and any(atom.b_iso > max_b for atom in pi_atoms):
+        return []
     pi_alt = pi_atoms[0].altloc if pi_atoms else ''
     
     pi_center, pi_center_arr, pi_normal, pi_b_mean = geometry.get_pi_info(pi_atoms)
@@ -210,13 +216,20 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         x_atom = x_cra.atom
         x_res = x_cra.residue
         x_res_name = x_res.name
+        x_elem = x_atom.element.name.upper()
+        if x_elem not in config.TARGET_ELEMENTS_X:
+            continue
         
         is_sym_mate = (x_mark.image_idx != 0)
         if is_sym_mate and not sym_contacts:
             continue
         
         if filter_donor and x_res_name not in filter_donor: continue
-        if filter_donor_atom and x_atom.name not in filter_donor_atom: continue
+        if filter_donor_atom and x_elem not in filter_donor_atom and x_atom.name.upper() not in filter_donor_atom:
+            continue
+
+        if x_cra.chain.name == chain.name and x_res.seqid == residue.seqid and x_res.name == residue.name:
+            continue
 
         if (x_res_name in ('ASP', 'GLU') and x_atom.name in ('OD1', 'OD2', 'OE1', 'OE2')) or \
            (x_atom.name == 'OXT'):
@@ -250,7 +263,6 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
             x_pos_arr = _pos_to_arr(x_atom.pos)
         dist_x_pi = geometry.calculate_distance(x_pos_arr, pi_center_arr)
         
-        x_elem = x_atom.element.name.upper()
         max_dist = config.THRESHOLDS.get(x_elem, config.THRESHOLDS['default'])
         
         if dist_x_pi > max_dist: continue
@@ -300,6 +312,14 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
                 
         h_pos_arr = _pos_to_arr(h_mark.pos) if is_sym_mate else _pos_to_arr(h_atom.pos)
         orig_h_positions.append(h_pos_arr)
+
+        xh_dist = float(np.linalg.norm(h_pos_arr - x_pos_arr))
+        if xh_dist <= config.MIN_COVALENT_XH or xh_dist > config.DIST_CUTOFF_H:
+            continue
+
+        bonded_hydrogens = config.get_bonded_hydrogens(x_cra.residue.name, x_atom.name)
+        if bonded_hydrogens and h_atom.name.upper() not in bonded_hydrogens:
+            continue
         
         if h_atom.altloc and x_atom.altloc and h_atom.altloc != x_atom.altloc:
             continue
@@ -481,7 +501,7 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
         remark_parts.append(f"SymContact op {sym_op}")
 
     if (x_cra.residue.name, x_atom.name) in config.CATION_DONORS:
-        remark_parts.append("Cation-pi")
+        remark_parts.append("Cation-π")
 
     # π-π stacking annotation: check if donor residue also has aromatic ring(s)
     donor_rings = config.get_aromatic_rings(x_cra.residue.name)
@@ -496,10 +516,10 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
             if pp_dist < 3.0 or pp_dist > config.PI_PI_DIST_MAX:
                 continue
             if pp_angle <= config.PI_PI_ANGLE_PARALLEL_MAX:
-                remark_parts.append(f"Pi-Pi Parallel d={pp_dist:.1f}")
+                remark_parts.append(f"π-π Parallel d={pp_dist:.1f}")
                 break
             elif pp_angle >= config.PI_PI_ANGLE_TSHAPED_MIN:
-                remark_parts.append(f"Pi-Pi T-shaped d={pp_dist:.1f}")
+                remark_parts.append(f"π-π T-shaped d={pp_dist:.1f}")
                 break
 
     hits.append({
@@ -514,7 +534,7 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
         'X_id': str(x_cra.residue.seqid),
         'X_atom': x_atom.name,
         'H_atom': h_name,
-        'dist_X_Pi': round(dist, 3),
+        'dist_X_Pi': _round_float(dist, 3),
         'is_plevin': is_plevin,
         'is_hudson': is_hudson,
         'remark': ", ".join(remark_parts),
@@ -522,18 +542,18 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
         'pi_ss_id': pi_ss_uid,
         'X_ss_type': x_ss_type,
         'X_ss_id': x_ss_uid,
-        'pi_avg_b': round(rctx.pi_b_mean, 2),
-        'pi_center_x': round(rctx.pi_center_arr[0], 3),
-        'pi_center_y': round(rctx.pi_center_arr[1], 3),
-        'pi_center_z': round(rctx.pi_center_arr[2], 3),
-        'X_b': round(x_atom.b_iso, 2),
-        'X_xyz_x': round(x_pos[0], 3),
-        'X_xyz_y': round(x_pos[1], 3),
-        'X_xyz_z': round(x_pos[2], 3),
+        'pi_avg_b': _round_float(rctx.pi_b_mean, 2),
+        'pi_center_x': _round_float(rctx.pi_center_arr[0], 3),
+        'pi_center_y': _round_float(rctx.pi_center_arr[1], 3),
+        'pi_center_z': _round_float(rctx.pi_center_arr[2], 3),
+        'X_b': _round_float(x_atom.b_iso, 2),
+        'X_xyz_x': _round_float(x_pos[0], 3),
+        'X_xyz_y': _round_float(x_pos[1], 3),
+        'X_xyz_z': _round_float(x_pos[2], 3),
         'seq_sep': seq_sep,
-        'theta': round(theta, 2) if theta is not None else 0,
-        'angle_XH_Pi': round(xh_ang, 2) if xh_ang is not None else 180,
-        'angle_XPCN': round(xpcn, 2) if xpcn is not None else None,
-        'proj_dist': round(proj, 3) if proj is not None else None,
+        'theta': _round_float(theta, 2) if theta is not None else 0,
+        'angle_XH_Pi': _round_float(xh_ang, 2) if xh_ang is not None else 180,
+        'angle_XPCN': _round_float(xpcn, 2) if xpcn is not None else None,
+        'proj_dist': _round_float(proj, 3) if proj is not None else None,
         'sym_op': sym_op,
     })
