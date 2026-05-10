@@ -1,5 +1,0 @@
-gemmi
-numpy
-
-[test]
-pytest
