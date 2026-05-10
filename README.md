@@ -6,9 +6,6 @@
 
 **Xpid** detects XH–π interactions in protein structures from PDB/mmCIF files using [Gemmi](https://gemmi.readthedocs.io/).
 
-- Source code: [https://github.com/SeanWang5868/xpid2](https://github.com/SeanWang5868/xpid2)
-- PyPI: [https://pypi.org/project/xpid/](https://pypi.org/project/xpid/)
-
 ## Installation
 
 ```bash
@@ -143,4 +140,5 @@ Verbose mode adds secondary-structure annotations, π-center and X coordinates, 
 ## Contact
 
 Sean Wang, York Structural Biology Laboratory (YSBL), University of York
+
 sean.wang@york.ac.uk
