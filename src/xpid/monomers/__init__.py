@@ -1,0 +1,1 @@
+"""Bundled monomer data namespace."""

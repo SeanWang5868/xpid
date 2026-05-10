@@ -1,6 +1,6 @@
 """
 cli.py
-Command-line interface for xpid — the XH-pi interaction detector.
+Command-line interface for xpid — the XH-π interaction detector.
 """
 import argparse
 import logging
@@ -38,7 +38,6 @@ logger = logging.getLogger("xpid")
 class TaskPacket(NamedTuple):
     """All parameters needed to process one structure file."""
     filepath: Path
-    mon_lib_path: str
     ftype_arg: str
     h_mode: int
     output_dir_str: str
@@ -92,7 +91,7 @@ def process_one_file(task: TaskPacket):
 
         if task.h_mode > 0:
             structure = prep.add_hydrogens_memory(
-                structure, task.mon_lib_path, h_change_val=task.h_mode)
+                structure, h_change_val=task.h_mode)
             if structure is None:
                 return f"Hydrogen addition failed: {task.filepath}", 0, [], None
 
@@ -130,7 +129,7 @@ def process_one_file(task: TaskPacket):
 # ---------------------------------------------------------------------------
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="XH-pi interaction detector")
+    parser = argparse.ArgumentParser(description="XH-π interaction detector")
     parser.add_argument('inputs', nargs='*', help="PDB/CIF files or directories")
     parser.add_argument('--pdb-list', type=str, help="Text file with PDB codes")
     parser.add_argument('--pdb-mirror', type=str, help="Local PDB mirror root")
@@ -156,30 +155,43 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Number of CPU cores to use.")
     proc.add_argument('--model', type=str, default="0",
                       help="Model index to analyze (or 'all').")
-    proc.add_argument('--cone', action='store_true',
-                      help="Enable implicit Cone logic for rotatable groups.")
+    proc.add_argument('--cone', dest='use_cone', action='store_true', default=True,
+                      help="Enable implicit Cone logic for rotatable groups (default).")
+    proc.add_argument('--no-cone', dest='use_cone', action='store_false',
+                      help="Disable implicit Cone logic for rotatable groups.")
     proc.add_argument('--sym-contacts', action='store_true',
-                      help="Detect XH-pi interactions across crystallographic symmetry mates.")
+                      help="Detect XH-π interactions across crystallographic symmetry mates.")
     proc.add_argument('--include-water', action='store_true',
-                      help="Include water molecules as potential XH-pi donors.")
+                      help="Include water molecules as potential XH-π donors.")
     proc.add_argument('--max-b', type=float, default=0.0,
-                      help="Maximum B-factor to consider an atom (0 = no filter).")
+                      help="Maximum B-factor for any π-ring atom or donor X atom (0 = no filter).")
 
     filt = parser.add_argument_group("Filters & Config")
-    filt.add_argument('--mon-lib', type=str,
-                      help="Path to custom Monomer Library.")
-    filt.add_argument('--set-mon-lib', type=str,
-                      help="Permanently set default Monomer Library path.")
     filt.add_argument('--pi-res', type=str,
-                      help="Filter: Pi residues (e.g. TRP,TYR).")
+                      help="Filter: π residues (e.g. TRP,TYR).")
     filt.add_argument('--donor-res', type=str,
                       help="Filter: Donor residues (e.g. LYS,ARG).")
     filt.add_argument('--donor-atom', type=str,
-                      help="Filter: Donor atoms (e.g. N,O,C).")
+                      help="Filter: Donor element symbols or exact atom names (e.g. N,O,C or OG,NZ).")
     filt.add_argument('--min-occ', type=float, default=0.0,
                       help="Minimum combined occupancy to report (default: 0.0).")
 
     return parser
+
+
+def _default_output_dir(inputs: List[str], files: List[Path]) -> Path:
+    """Default to the scanned folder, or to a single structure's parent folder."""
+    if len(inputs) == 1:
+        inp = Path(inputs[0])
+        if inp.is_dir():
+            return inp.resolve()
+        if inp.is_file():
+            return inp.resolve().parent
+
+    if len(files) == 1:
+        return files[0].resolve().parent
+
+    return Path.cwd()
 
 
 # ---------------------------------------------------------------------------
@@ -190,18 +202,15 @@ def main():
     parser = _build_parser()
     args = parser.parse_args()
 
-    # Handle permanent config setting
-    if args.set_mon_lib:
-        if os.path.isdir(args.set_mon_lib):
-            config.save_mon_lib_path(args.set_mon_lib)
-            print(f"[CONFIG] Default Monomer Library path set to: {args.set_mon_lib}")
-            sys.exit(0)
-        else:
-            print("[ERROR] Invalid directory provided for monomer library.")
-            sys.exit(1)
+    # Step 1: Gather input files
+    files = gather_inputs(args.inputs, args.pdb_list, args.pdb_mirror, args.redo_mirror)
+
+    if not files:
+        print("No valid input files found. Please check inputs or list/mirror paths.")
+        sys.exit(1)
 
     # Output directory
-    output_dir = Path(args.out_dir) if args.out_dir else Path.cwd() / "xpid_output"
+    output_dir = Path(args.out_dir).resolve() if args.out_dir else _default_output_dir(args.inputs, files)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Logging
@@ -213,16 +222,9 @@ def main():
             level=logging.INFO, format='%(message)s',
             handlers=[logging.StreamHandler(sys.stdout)])
 
-    # Step 1: Gather input files
     logger.info("--- Xpid Initialization ---")
-    files = gather_inputs(args.inputs, args.pdb_list, args.pdb_mirror, args.redo_mirror)
-
-    if not files:
-        logger.error("No valid input files found. Please check inputs or list/mirror paths.")
-        sys.exit(1)
 
     # Step 2: Build configuration
-    mon_lib_path = args.mon_lib if args.mon_lib else config.DEFAULT_MON_LIB_PATH
     filters = {
         'pi': [x.strip().upper() for x in args.pi_res.split(',')] if args.pi_res else None,
         'donor': [x.strip().upper() for x in args.donor_res.split(',')] if args.donor_res else None,
@@ -230,7 +232,7 @@ def main():
     }
 
     h_mode_desc = H_MODE_MAP.get(args.h_mode, "Unknown")
-    cone_status = "Enabled" if args.cone else "Disabled (Default Static H)"
+    cone_status = "Enabled (default)" if args.use_cone else "Disabled"
     sym_status = "Enabled" if args.sym_contacts else "Disabled"
     water_status = "Included" if args.include_water else "Excluded (default)"
     max_b_status = f"{args.max_b:.1f} \u00c5\u00b2" if args.max_b > 0 else "No filter"
@@ -240,6 +242,7 @@ def main():
     logger.info(f"Format      : {args.file_type.upper()} "
                 f"({'Separate Files' if args.separate else 'Merged File'})")
     logger.info(f"H-Mode      : {args.h_mode} ({h_mode_desc})")
+    logger.info(f"Monomer Lib : {config.DEFAULT_MON_LIB_PATH}")
     logger.info(f"Cone Logic  : {cone_status}")
     logger.info(f"Sym Contacts: {sym_status}")
     logger.info(f"Water       : {water_status}")
@@ -249,8 +252,8 @@ def main():
     # Step 3: Execute
     ftype_arg = args.file_type.lower()
     tasks = [
-        TaskPacket(f, mon_lib_path, ftype_arg, args.h_mode, str(output_dir),
-                   args.separate, filters, args.verbose, args.model, args.cone,
+        TaskPacket(f, ftype_arg, args.h_mode, str(output_dir),
+                   args.separate, filters, args.verbose, args.model, args.use_cone,
                    args.min_occ, args.sym_contacts, args.include_water, args.max_b)
         for f in files
     ]
@@ -291,7 +294,7 @@ def main():
 
         # Step 4: Summary
         print("-" * 60)
-        print(f"[SUMMARY] Total XH-pi interactions detected: {total_found}")
+        print(f"[SUMMARY] Total XH-π interactions detected: {total_found}")
 
         if error_logs:
             print(f"[WARNING] {len(error_logs)} files failed processing. Check log for details.")

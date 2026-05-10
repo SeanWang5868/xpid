@@ -1,14 +1,32 @@
-# Python build artifacts
+# macOS / editor metadata
+.DS_Store
+**/.DS_Store
+.ipynb_checkpoints/
+
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build and packaging artifacts
 build/
 dist/
 *.egg-info/
-__pycache__/
 
-# Local output and temp files
+# Xpid runtime output
 xpid_output/
-run_dui_tmp
-dui_install/
+*.log
 
+# Demo-downloaded structures
+/5fjj.cif.gz
+/demo_structure/
+
+# Local DUI scratch/install files
+run_dui_tmp/
+run_dui2_nodes/
 dui_install/
 install_dui2_after_ccp4_w_curl.sh
-*.DS_Store
