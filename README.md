@@ -15,27 +15,6 @@
 pip install xpid
 ```
 
-For Parquet export:
-
-```bash
-pip install "xpid[parquet]"
-```
-
-The demo notebook also uses:
-
-```bash
-pip install "xpid[demo]"
-```
-
-## Monomer Library
-
-Hydrogen placement depends on the CCP4 monomer library. Xpid handles this automatically:
-
-1. It first looks for an existing CCP4 monomer library through `CLIBD_MON`, `GEMMI_MON_LIB_PATH`, `CLIBD`, or `CCP4`.
-2. If no local CCP4 library is found, it downloads the CCP4 monomer library from [MonomerLibrary/monomers](https://github.com/MonomerLibrary/monomers) into the user cache.
-
-There is no manual monomer-library setup step for normal use.
-
 ## Quick Start
 
 Scan one structure:
@@ -44,20 +23,11 @@ Scan one structure:
 xpid 1abc.cif --file-type csv
 ```
 
-By default, the result is written beside the scanned structure:
-
-```text
-/path/to/1abc.cif
-/path/to/xpid_results.csv
-```
-
 Scan a directory:
 
 ```bash
 xpid ./structures --file-type json
 ```
-
-The merged result is written into `./structures/xpid_results.json`.
 
 Use a PDB code list with a local mirror:
 
@@ -173,3 +143,4 @@ Verbose mode adds secondary-structure annotations, π-center and X coordinates, 
 ## Contact
 
 Sean Wang, York Structural Biology Laboratory (YSBL), University of York
+sean.wang@york.ac.uk
