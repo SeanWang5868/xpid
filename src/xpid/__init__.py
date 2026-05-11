@@ -33,7 +33,6 @@ def detect(
 
     try:
         structure = gemmi.read_structure(str(path_obj))
-        core.select_best_altconf(structure)
         structure = prep.add_hydrogens_memory(structure, h_change_val=h_mode)
         
         if not structure:

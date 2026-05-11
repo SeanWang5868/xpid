@@ -184,8 +184,7 @@ def generate_rotated_hydrogens(parent_pos: np.ndarray,
 def calculate_pi_pi_geometry(center1: np.ndarray, normal1: np.ndarray,
                              center2: np.ndarray, normal2: np.ndarray
                              ) -> Tuple[float, float, float]:
-    """Calculate π-π stacking geometry between two aromatic rings.
-    Returns (centroid_dist, inter_normal_angle_deg, lateral_offset)."""
+    """Return centroid distance, inter-normal angle, and lateral offset."""
     vec = center2 - center1
     dist = np.linalg.norm(vec)
 

@@ -84,7 +84,6 @@ def process_one_file(task: TaskPacket):
 
     try:
         structure = gemmi.read_structure(str(task.filepath))
-        core.select_best_altconf(structure)
 
         if not structure or len(structure) == 0:
             return f"Empty or invalid structure: {task.filepath}", 0, [], None

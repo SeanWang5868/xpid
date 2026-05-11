@@ -23,6 +23,105 @@ def _round_float(value, ndigits: int):
     return round(float(value), ndigits)
 
 
+def _altloc(atom: gemmi.Atom) -> str:
+    return "" if atom.altloc in ("", "\0") else atom.altloc
+
+
+def _sorted_altlocs(altlocs: Set[str]) -> List[str]:
+    return sorted(altlocs, key=lambda alt: (alt != "", alt))
+
+
+def _atom_variants_for_names(residue, atom_names: Set[str]) -> List[tuple]:
+    """Return complete atom-name sets for each compatible altloc state."""
+    atoms_by_name = {name: [] for name in atom_names}
+    for atom in residue:
+        if atom.name in atoms_by_name:
+            atoms_by_name[atom.name].append(atom)
+
+    if any(not atoms for atoms in atoms_by_name.values()):
+        return []
+
+    altlocs = {""}
+    for atoms in atoms_by_name.values():
+        altlocs.update(_altloc(atom) for atom in atoms if _altloc(atom))
+
+    variants = []
+    seen = set()
+    for alt in _sorted_altlocs(altlocs):
+        selected = []
+        for name in sorted(atom_names):
+            atoms = atoms_by_name[name]
+            exact = [atom for atom in atoms if _altloc(atom) == alt]
+            blank = [atom for atom in atoms if _altloc(atom) == ""]
+            if alt:
+                atom = exact[0] if exact else (blank[0] if blank else None)
+            else:
+                atom = blank[0] if blank else None
+            if atom is None:
+                selected = []
+                break
+            selected.append(atom)
+
+        if selected:
+            signature = tuple(id(atom) for atom in selected)
+            if signature not in seen:
+                seen.add(signature)
+                variants.append((alt, selected))
+    return variants
+
+
+def _dedup_key(hit: Dict[str, Any]) -> tuple:
+    return (
+        hit.get("pdb"), hit.get("model"), hit.get("_pi_ring_key"),
+        hit.get("pi_chain"), hit.get("pi_res"), hit.get("pi_id"),
+        hit.get("X_chain"), hit.get("X_res"), hit.get("X_id"),
+        hit.get("X_atom"), hit.get("H_atom"), hit.get("sym_op"),
+    )
+
+
+def _dedup_score(hit: Dict[str, Any]) -> tuple:
+    return (
+        hit.get("_combined_occ", 0.0),
+        int(hit.get("is_plevin", 0)) + int(hit.get("is_hudson", 0)),
+        -float(hit.get("dist_X_Pi", 999.0)),
+        float(hit.get("angle_XH_Pi", 0.0) or 0.0),
+    )
+
+
+def _h_source(h_atom: Optional[gemmi.Atom], is_cone: bool) -> str:
+    if is_cone:
+        return "cone_virtual"
+    if h_atom is not None and h_atom.flag == "G":
+        return "added"
+    return "experimental"
+
+
+def _is_cation_pi_donor(res_name: str, atom_name: str) -> bool:
+    return (res_name, atom_name) in config.CATION_DONORS
+
+
+def _deduplicate_hits(hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    selected: Dict[tuple, Dict[str, Any]] = {}
+    order: List[tuple] = []
+
+    for hit in hits:
+        key = _dedup_key(hit)
+        if key not in selected:
+            selected[key] = hit
+            order.append(key)
+            continue
+        if _dedup_score(hit) > _dedup_score(selected[key]):
+            selected[key] = hit
+
+    deduped = []
+    for key in order:
+        hit = selected[key]
+        hit.pop("_combined_occ", None)
+        hit.pop("_pi_ring_key", None)
+        deduped.append(hit)
+    return deduped
+
+
 class _RingContext(NamedTuple):
     """Immutable context for one aromatic ring being analyzed."""
     pdb_name: str
@@ -144,12 +243,13 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                     ring_size = len(target_atoms)
                     mode = f'ring{ring_idx+1}'
 
-                    results.extend(_detect_residue(
-                        pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
-                        target_atoms, mode, filter_donor, filter_donor_atom, use_cone, ring_size,
-                        min_occ, sym_contacts=sym_contacts, max_b=max_b
-                    ))
-    return results
+                    for pi_alt, pi_atoms in _atom_variants_for_names(residue, target_atoms):
+                        results.extend(_detect_residue(
+                            pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
+                            pi_atoms, pi_alt, mode, filter_donor, filter_donor_atom, use_cone,
+                            ring_size, min_occ, sym_contacts=sym_contacts, max_b=max_b
+                        ))
+    return _deduplicate_hits(results)
 
 def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.NeighborSearch,
                       x_pos: Optional[gemmi.Position] = None) -> bool:
@@ -177,14 +277,11 @@ def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.Neighbor
     
     return False
 
-def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, ss_index, 
-                    target_atoms: Set[str], mode: str, filter_donor: Optional[List[str]], 
+def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
+                    pi_atoms: List[gemmi.Atom], pi_alt: str, mode: str, filter_donor: Optional[List[str]],
                     filter_donor_atom: Optional[List[str]], use_cone: bool, ring_size: int,
                     min_occ: float, sym_contacts: bool = False, max_b: float = 0.0):
     hits = []
-    
-    pi_atoms = [atom for atom in residue if atom.name in target_atoms]
-    if len(pi_atoms) != len(target_atoms): return []
 
     max_planar_dev = geometry.calculate_planarity_deviation(pi_atoms)
     if max_planar_dev > 0.5:
@@ -196,8 +293,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         return []
     if max_b > 0 and any(atom.b_iso > max_b for atom in pi_atoms):
         return []
-    pi_alt = pi_atoms[0].altloc if pi_atoms else ''
-    
+
     pi_center, pi_center_arr, pi_normal, pi_b_mean = geometry.get_pi_info(pi_atoms)
     proj_threshold = 2.0 if ring_size == 6 else 1.6
     
@@ -209,7 +305,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         avg_pi_occ=avg_pi_occ, proj_threshold=proj_threshold,
     )
     
-    x_candidates = ns.find_atoms(pi_center, alt=pi_alt, radius=config.DIST_SEARCH_LIMIT)
+    x_candidates = ns.find_atoms(pi_center, alt=pi_alt or "\0", radius=config.DIST_SEARCH_LIMIT)
     
     for x_mark in x_candidates:
         x_cra = x_mark.to_cra(model)
@@ -233,6 +329,9 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
 
         if (x_res_name in ('ASP', 'GLU') and x_atom.name in ('OD1', 'OD2', 'OE1', 'OE2')) or \
            (x_atom.name == 'OXT'):
+            continue
+
+        if _is_cation_pi_donor(x_res_name, x_atom.name):
             continue
             
         allow_cone_scan = True
@@ -343,7 +442,7 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
             found = True
             _record_hit(hits, rctx, x_cra, x_atom, h_atom.name, dist_x_pi, 
                         plevin, hudson, x_pos_arr, theta, xh_pi_angle, xpcn_angle, proj_dist,
-                        is_cone=False, combined_occ=h_combined_occ, sym_op=sym_op)
+                        is_cone=False, combined_occ=h_combined_occ, sym_op=sym_op, h_atom=h_atom)
     
     return found, orig_h_positions
 
@@ -468,16 +567,17 @@ def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name
 
     if best_hit is not None:
         b_theta, b_xh_ang, b_plevin, b_hudson = best_hit
-        _record_hit(hits, rctx, x_cra, x_atom, "(virt)", dist_x_pi,
+        _record_hit(hits, rctx, x_cra, x_atom, "virt", dist_x_pi,
                     b_plevin, b_hudson, x_pos_arr, b_theta, b_xh_ang, xpcn_angle, proj_dist,
-                    is_cone=True, combined_occ=combined_occ, sym_op=sym_op)
+                    is_cone=True, combined_occ=combined_occ, sym_op=sym_op, h_atom=None)
 
 def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
                 x_cra, x_atom, h_name: str, dist: float, 
                 is_plevin: int, is_hudson: int, x_pos: np.ndarray,
                 theta: Optional[float], xh_ang: Optional[float], xpcn: Optional[float], 
                 proj: Optional[float], is_cone: bool = False,
-                combined_occ: float = 1.0, sym_op: int = 0):
+                combined_occ: float = 1.0, sym_op: int = 0,
+                h_atom: Optional[gemmi.Atom] = None):
     
     if combined_occ < rctx.min_occ:
         return
@@ -489,38 +589,21 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
     if rctx.chain.name == x_cra.chain.name:
         seq_sep = rctx.residue.seqid.num - x_cra.residue.seqid.num
 
-    remark_parts = []
+    h_source = _h_source(h_atom, is_cone)
+    is_trp_5ring = int(rctx.residue.name == 'TRP' and rctx.ring_size == 5)
+    is_pi_pi_tshaped = 0
 
-    if is_cone:
-        remark_parts.append("Cone")
-
-    if rctx.residue.name == 'TRP' and rctx.ring_size == 5:
-        remark_parts.append("TRP 5-ring acceptor")
-
-    if sym_op != 0:
-        remark_parts.append(f"SymContact op {sym_op}")
-
-    if (x_cra.residue.name, x_atom.name) in config.CATION_DONORS:
-        remark_parts.append("Cation-π")
-
-    # π-π stacking annotation: check if donor residue also has aromatic ring(s)
     donor_rings = config.get_aromatic_rings(x_cra.residue.name)
-    if donor_rings:
-        for d_ring_atoms in donor_rings:
-            d_pi_atoms = [a for a in x_cra.residue if a.name in d_ring_atoms]
-            if len(d_pi_atoms) != len(d_ring_atoms):
-                continue
-            _, d_center, d_normal, _ = geometry.get_pi_info(d_pi_atoms)
-            pp_dist, pp_angle, pp_offset = geometry.calculate_pi_pi_geometry(
-                rctx.pi_center_arr, rctx.pi_normal, d_center, d_normal)
-            if pp_dist < 3.0 or pp_dist > config.PI_PI_DIST_MAX:
-                continue
-            if pp_angle <= config.PI_PI_ANGLE_PARALLEL_MAX:
-                remark_parts.append(f"π-π Parallel d={pp_dist:.1f}")
-                break
-            elif pp_angle >= config.PI_PI_ANGLE_TSHAPED_MIN:
-                remark_parts.append(f"π-π T-shaped d={pp_dist:.1f}")
-                break
+    for d_ring_atoms in donor_rings:
+        d_pi_atoms = [a for a in x_cra.residue if a.name in d_ring_atoms]
+        if len(d_pi_atoms) != len(d_ring_atoms):
+            continue
+        _, d_center, d_normal, _ = geometry.get_pi_info(d_pi_atoms)
+        pp_dist, pp_angle, _ = geometry.calculate_pi_pi_geometry(
+            rctx.pi_center_arr, rctx.pi_normal, d_center, d_normal)
+        if 3.0 <= pp_dist <= config.PI_PI_DIST_MAX and pp_angle >= config.PI_PI_ANGLE_TSHAPED_MIN:
+            is_pi_pi_tshaped = 1
+            break
 
     hits.append({
         'pdb': rctx.pdb_name,
@@ -537,7 +620,9 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
         'dist_X_Pi': _round_float(dist, 3),
         'is_plevin': is_plevin,
         'is_hudson': is_hudson,
-        'remark': ", ".join(remark_parts),
+        'H_source': h_source,
+        'is_trp_5ring_acceptor': is_trp_5ring,
+        'is_pi_pi_tshaped': is_pi_pi_tshaped,
         'pi_ss_type': pi_ss_type,
         'pi_ss_id': pi_ss_uid,
         'X_ss_type': x_ss_type,
@@ -556,4 +641,6 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
         'angle_XPCN': _round_float(xpcn, 2) if xpcn is not None else None,
         'proj_dist': _round_float(proj, 3) if proj is not None else None,
         'sym_op': sym_op,
+        '_combined_occ': float(combined_occ),
+        '_pi_ring_key': rctx.mode,
     })
