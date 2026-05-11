@@ -247,7 +247,5 @@ CATION_DONORS = {
     ('ARG', 'NE'),
 }
 
-# π-π stacking thresholds
 PI_PI_DIST_MAX = 5.5
-PI_PI_ANGLE_PARALLEL_MAX = 35.0
 PI_PI_ANGLE_TSHAPED_MIN = 60.0

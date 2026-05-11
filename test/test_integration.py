@@ -1,14 +1,15 @@
 import gemmi
-from xpid import core, config
+from xpid import core, config, prep
 
 
-def _atom(name, element, xyz, b_iso=10.0):
+def _atom(name, element, xyz, b_iso=10.0, occ=1.0, altloc="\0"):
     atom = gemmi.Atom()
     atom.name = name
     atom.element = gemmi.Element(element)
     atom.pos = gemmi.Position(*xyz)
-    atom.occ = 1.0
+    atom.occ = occ
     atom.b_iso = b_iso
+    atom.altloc = altloc
     return atom
 
 
@@ -93,6 +94,19 @@ def test_donor_atom_filter_accepts_element_symbols():
     assert nitrogen_hits == []
 
 
+def test_cation_pi_donors_are_excluded_from_core_detection():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    lys = gemmi.Residue()
+    lys.name = "LYS"
+    lys.seqid = _seqid(2)
+    lys.add_atom(_atom("NZ", "N", (0.0, 0.0, 3.0)))
+    lys.add_atom(_atom("HZ1", "H", (0.0, 0.0, 2.0)))
+    chain.add_residue(lys)
+
+    assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+
+
 def test_hydrogen_atoms_are_not_x_donors():
     st = _structure_with_phe_and_og(include_external_donor=False)
     chain = st[0][0]
@@ -123,6 +137,85 @@ def test_dictionary_bonded_hydrogens_reject_unbonded_neighbor(monkeypatch):
     )
 
     assert core.detect_interactions_in_structure(st, "test") == []
+
+
+def test_lower_occupancy_altloc_can_contribute_interaction():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 5.2), occ=0.8, altloc="A"))
+    ser.add_atom(_atom("HG", "H", (0.0, 0.0, 4.2), occ=0.8, altloc="A"))
+    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.0), occ=0.2, altloc="B"))
+    ser.add_atom(_atom("HG", "H", (0.0, 0.0, 2.0), occ=0.2, altloc="B"))
+    chain.add_residue(ser)
+
+    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+
+    assert len(hits) == 1
+    assert hits[0]["X_atom"] == "OG"
+    assert hits[0]["dist_X_Pi"] == 3.0
+
+
+def test_duplicate_altloc_hits_are_collapsed_to_best_occupancy():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.0), occ=0.7, altloc="A"))
+    ser.add_atom(_atom("HG", "H", (0.0, 0.0, 2.0), occ=0.7, altloc="A"))
+    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.1), occ=0.3, altloc="B"))
+    ser.add_atom(_atom("HG", "H", (0.0, 0.0, 2.1), occ=0.3, altloc="B"))
+    chain.add_residue(ser)
+
+    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+
+    assert len(hits) == 1
+    assert hits[0]["dist_X_Pi"] == 3.0
+
+
+def test_hydrogen_merge_preserves_residues_with_experimental_h(monkeypatch):
+    st = gemmi.Structure()
+    st.cell = gemmi.UnitCell(30, 30, 30, 90, 90, 90)
+    model = gemmi.Model("1")
+    chain = gemmi.Chain("A")
+
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(1)
+    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.0)))
+    ser.add_atom(_atom("HG", "H", (9.0, 9.0, 9.0)))
+    chain.add_residue(ser)
+
+    thr = gemmi.Residue()
+    thr.name = "THR"
+    thr.seqid = _seqid(2)
+    thr.add_atom(_atom("OG1", "O", (1.0, 0.0, 3.0)))
+    chain.add_residue(thr)
+
+    model.add_chain(chain)
+    st.add_model(model)
+
+    monkeypatch.setattr(prep, "_get_shared_monlib", lambda codes: gemmi.MonLib())
+
+    def fake_prepare(working, monlib, h_change_val):
+        for residue in working[0][0]:
+            residue.add_atom(_atom("HX", "H", (1.0, 1.0, 1.0)))
+
+    monkeypatch.setattr(prep, "_prepare_topology_with_retries", fake_prepare)
+
+    prep.add_hydrogens_memory(st)
+
+    ser_h = [atom for atom in st[0][0][0] if atom.element.name.upper() == "H"]
+    thr_h = [atom for atom in st[0][0][1] if atom.element.name.upper() == "H"]
+
+    assert len(ser_h) == 1
+    assert ser_h[0].name == "HG"
+    assert ser_h[0].pos.x == 9.0
+    assert len(thr_h) == 1
+    assert thr_h[0].name == "HX"
 
 
 def test_max_b_filters_pi_ring_atoms():

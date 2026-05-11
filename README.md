@@ -127,7 +127,7 @@ Definitions: Cπ = ring centroid, **n** = ring normal, X = donor heavy atom, Xp 
 
 ## Output Data
 
-Simple mode includes structure ID, resolution, donor/π-acceptor residue IDs, X atom, H atom, d(X–Cπ), Hudson/Plevin flags, remarks, and symmetry operation index.
+Simple mode includes structure ID, resolution, donor/π-acceptor residue IDs, X atom, H atom, H source, d(X–Cπ), Hudson/Plevin flags, TRP 5-ring flag, and symmetry operation index.
 
 Verbose mode adds secondary-structure annotations, π-center and X coordinates, angles, projection distance, sequence separation, and B-factors.
 

@@ -16,7 +16,8 @@ SIMPLE_COLS = [
     'pdb', 'resolution',
     'pi_chain', 'pi_res', 'pi_id',
     'X_chain', 'X_res', 'X_id', 'X_atom', 'H_atom',
-    'dist_X_Pi', 'is_plevin', 'is_hudson', 'remark', 'sym_op'
+    'H_source', 'dist_X_Pi', 'is_plevin', 'is_hudson',
+    'is_trp_5ring_acceptor', 'is_pi_pi_tshaped', 'sym_op'
 ]
 
 
