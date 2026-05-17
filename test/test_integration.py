@@ -176,6 +176,52 @@ def test_duplicate_altloc_hits_are_collapsed_to_best_occupancy():
     assert hits[0]["dist_X_Pi"] == 3.0
 
 
+def test_p_model_uses_plane_distance_not_centroid_distance():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (1.9, 0.0, 4.0)))
+    ser.add_atom(_atom("HG", "H", (1.9, 0.0, 3.0)))
+    chain.add_residue(ser)
+
+    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+
+    assert len(hits) == 1
+    assert hits[0]["dist_X_Pi"] == 4.0
+    assert hits[0]["proj_dist"] == 1.9
+    assert hits[0]["h_proj_dist"] == 1.9
+    assert "is_plevin" not in hits[0]
+    assert "is_hudson" not in hits[0]
+
+
+def test_p_model_rejects_h_ray_that_misses_p():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.0)))
+    ser.add_atom(_atom("HG", "H", (1.0, 0.0, 3.0)))
+    chain.add_residue(ser)
+
+    assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+
+
+def test_p_model_rejects_x_projection_outside_p():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (2.1, 0.0, 3.0)))
+    ser.add_atom(_atom("HG", "H", (2.1, 0.0, 2.0)))
+    chain.add_residue(ser)
+
+    assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+
+
 def test_hydrogen_merge_preserves_residues_with_experimental_h(monkeypatch):
     st = gemmi.Structure()
     st.cell = gemmi.UnitCell(30, 30, 30, 90, 90, 90)

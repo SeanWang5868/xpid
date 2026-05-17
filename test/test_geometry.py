@@ -7,24 +7,33 @@ def test_distance():
     b = np.array([3., 4., 0.])
     assert geometry.calculate_distance(a, b) == 5.0
 
-def test_xpcn_angle():
-    # X on Z axis, Center at Origin, Normal is Z
-    pi_center = np.array([0., 0., 0.])
-    pi_normal = np.array([0., 0., 1.])
-    x_pos = np.array([0., 0., 5.])
-    
-    # Vector X->Pi is [0,0,-5]. Dot with Normal [0,0,1] is -5.
-    # Angle is 180. Logic converts >90 to 180-angle -> 0.
-    angle = geometry.calculate_xpcn_angle(x_pos, pi_center, pi_normal)
-    assert np.isclose(angle, 0.0)
 
-def test_hudson_theta():
-    # Setup where H points towards ring
-    pi_center = np.array([0., 0., 0.])
+def test_p_plane_distance_and_projection():
+    p_center = np.array([0., 0., 0.])
+    normal = np.array([0., 0., 2.])
+    point = np.array([1.5, -0.5, 3.0])
+
+    assert np.isclose(geometry.calculate_plane_distance(point, p_center, normal), 3.0)
+    projected = geometry.project_point_to_plane(point, p_center, normal)
+
+    assert np.allclose(projected, np.array([1.5, -0.5, 0.0]))
+    assert np.isclose(geometry.calculate_p_offset(projected, p_center), np.sqrt(2.5))
+
+
+def test_xh_ray_p_intersection_requires_h_pointing_to_plane():
+    p_center = np.array([0., 0., 0.])
     normal = np.array([0., 0., 1.])
-    x_pos = np.array([5., 0., 0.])
-    h_pos = np.array([4., 0., 0.]) # X-H points to center
-    
-    # X-H vector: [-1, 0, 0]. Normal: [0, 0, 1]. Dot is 0. Angle 90.
-    angle = geometry.calculate_hudson_theta(pi_center, x_pos, h_pos, normal)
-    assert np.isclose(angle, 90.0) # Hudson logic allows <=90 normalization
+    x_pos = np.array([0., 0., 3.0])
+    h_pos = np.array([0., 0., 2.0])
+
+    intersection = geometry.calculate_xh_ray_p_intersection(x_pos, h_pos, p_center, normal)
+
+    assert intersection is not None
+    hit, t = intersection
+    assert np.allclose(hit, p_center)
+    assert np.isclose(t, 3.0)
+
+    assert geometry.calculate_xh_ray_p_intersection(
+        x_pos, np.array([0., 0., 4.0]), p_center, normal) is None
+    assert geometry.calculate_xh_ray_p_intersection(
+        x_pos, np.array([1., 0., 3.0]), p_center, normal) is None

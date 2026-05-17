@@ -1,6 +1,6 @@
 """
 core.py
-Core logic for detecting XH-π interactions using Dual-Track logic.
+Core logic for detecting XH-π interactions using the P model.
 Track 1: Explicit H (Default)
 Track 2: Implicit/Cone rescue (enabled by default via use_cone=True)
 """
@@ -82,9 +82,9 @@ def _dedup_key(hit: Dict[str, Any]) -> tuple:
 def _dedup_score(hit: Dict[str, Any]) -> tuple:
     return (
         hit.get("_combined_occ", 0.0),
-        int(hit.get("is_plevin", 0)) + int(hit.get("is_hudson", 0)),
         -float(hit.get("dist_X_Pi", 999.0)),
-        float(hit.get("angle_XH_Pi", 0.0) or 0.0),
+        -float(hit.get("h_proj_dist", 999.0)),
+        -float(hit.get("proj_dist", 999.0)),
     )
 
 
@@ -140,7 +140,7 @@ class _RingContext(NamedTuple):
     ring_size: int
     min_occ: float
     avg_pi_occ: float
-    proj_threshold: float
+    p_radius: float
 
 BLOCKING_METALS = {
     'ZN', 'FE', 'CU', 'MN', 'MG', 'CO', 'NI', 'CA', 'CD', 'HG',
@@ -295,14 +295,14 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         return []
 
     pi_center, pi_center_arr, pi_normal, pi_b_mean = geometry.get_pi_info(pi_atoms)
-    proj_threshold = 2.0 if ring_size == 6 else 1.6
+    p_radius = config.P_RADIUS_BY_RING_SIZE.get(ring_size, config.P_RADIUS_BY_RING_SIZE[6])
     
     rctx = _RingContext(
         pdb_name=pdb_name, resolution=resolution, model=model, model_id=model_id,
         chain=chain, residue=residue, ns=ns, ss_index=ss_index,
         pi_center_arr=pi_center_arr, pi_normal=pi_normal, pi_b_mean=pi_b_mean,
         pi_alt=pi_alt, mode=mode, ring_size=ring_size, min_occ=min_occ,
-        avg_pi_occ=avg_pi_occ, proj_threshold=proj_threshold,
+        avg_pi_occ=avg_pi_occ, p_radius=p_radius,
     )
     
     x_candidates = ns.find_atoms(pi_center, alt=pi_alt or "\0", radius=config.DIST_SEARCH_LIMIT)
@@ -360,28 +360,32 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
             x_pos_arr = _pos_to_arr(x_mark.pos)
         else:
             x_pos_arr = _pos_to_arr(x_atom.pos)
-        dist_x_pi = geometry.calculate_distance(x_pos_arr, pi_center_arr)
-        
-        max_dist = config.THRESHOLDS.get(x_elem, config.THRESHOLDS['default'])
-        
-        if dist_x_pi > max_dist: continue
-        
-        xpcn_angle = geometry.calculate_xpcn_angle(x_pos_arr, pi_center_arr, pi_normal)
+        dist_x_pi = geometry.calculate_plane_distance(x_pos_arr, pi_center_arr, pi_normal)
+        if dist_x_pi is None:
+            continue
+
+        max_plane_dist = config.P_PLANE_DMAX.get(x_elem, config.P_PLANE_DMAX['default'])
+
+        if dist_x_pi > max_plane_dist:
+            continue
+
         proj_dist = geometry.calculate_projection_dist(pi_normal, pi_center_arr, x_pos_arr)
+        if proj_dist is None or proj_dist > rctx.p_radius:
+            continue
         
         sym_op = x_mark.image_idx if is_sym_mate else 0
 
         # --- Track 1: Explicit H ---
         found, orig_h_positions = _run_explicit_track(
             rctx, x_cra, x_atom, x_mark, x_pos_arr, is_sym_mate,
-            dist_x_pi, max_dist, xpcn_angle, proj_dist, combined_occ, sym_op, hits
+            dist_x_pi, proj_dist, combined_occ, sym_op, hits
         )
 
         # --- Track 2: Cone rescue ---
         if not found and use_cone and allow_cone_scan:
             _run_cone_track(
                 rctx, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
-                x_pos_arr, is_sym_mate, dist_x_pi, max_dist, xpcn_angle, proj_dist,
+                x_pos_arr, is_sym_mate, dist_x_pi, proj_dist,
                 combined_occ, orig_h_positions, sym_op, hits
             )
 
@@ -390,7 +394,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
 
 def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
                         x_pos_arr, is_sym_mate,
-                        dist_x_pi, max_dist, xpcn_angle, proj_dist,
+                        dist_x_pi, proj_dist,
                         combined_occ, sym_op, hits) -> tuple:
     """Track 1: Explicit hydrogen geometry. Returns (found_hit, orig_h_positions)."""
     found = False
@@ -425,30 +429,26 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
         
         h_combined_occ = min(combined_occ, h_atom.occ)
         
-        xh_pi_angle = geometry.calculate_xh_picenter_angle(rctx.pi_center_arr, x_pos_arr, h_pos_arr)
-        theta = geometry.calculate_hudson_theta(rctx.pi_center_arr, x_pos_arr, h_pos_arr, rctx.pi_normal)
-        
-        if xh_pi_angle is None or theta is None or xpcn_angle is None: continue
+        intersection = geometry.calculate_xh_ray_p_intersection(
+            x_pos_arr, h_pos_arr, rctx.pi_center_arr, rctx.pi_normal)
+        if intersection is None:
+            continue
 
-        plevin = 0
-        if dist_x_pi < max_dist and xh_pi_angle >= 120.0 and xpcn_angle < 25.0:
-            plevin = 1
-        
-        hudson = 0
-        if proj_dist is not None and theta <= 40.0 and dist_x_pi <= max_dist and proj_dist <= rctx.proj_threshold:
-            hudson = 1
-        
-        if plevin == 1 or hudson == 1:
-            found = True
-            _record_hit(hits, rctx, x_cra, x_atom, h_atom.name, dist_x_pi, 
-                        plevin, hudson, x_pos_arr, theta, xh_pi_angle, xpcn_angle, proj_dist,
-                        is_cone=False, combined_occ=h_combined_occ, sym_op=sym_op, h_atom=h_atom)
+        h_hit_pos, h_ray_t = intersection
+        h_proj_dist = geometry.calculate_p_offset(h_hit_pos, rctx.pi_center_arr)
+        if h_proj_dist > rctx.p_radius:
+            continue
+
+        found = True
+        _record_hit(hits, rctx, x_cra, x_atom, h_atom.name, dist_x_pi,
+                    x_pos_arr, proj_dist, h_proj_dist, h_ray_t,
+                    is_cone=False, combined_occ=h_combined_occ, sym_op=sym_op, h_atom=h_atom)
     
     return found, orig_h_positions
 
 
 def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
-                    x_pos_arr, is_sym_mate, dist_x_pi, max_dist, xpcn_angle, proj_dist,
+                    x_pos_arr, is_sym_mate, dist_x_pi, proj_dist,
                     combined_occ, orig_h_positions, sym_op, hits):
     """Track 2: Cone rescue for rotatable groups."""
     if x_res_name not in config.ROTATABLE_MAPPING:
@@ -548,34 +548,34 @@ def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name
 
     # Score and select best cone candidate
     best_hit = None
-    best_xh_angle = -1.0  
+    best_score = None
     
     for h_pos_np in h_candidates_cone:
-        theta = geometry.calculate_hudson_theta(rctx.pi_center_arr, x_pos_arr, h_pos_np, rctx.pi_normal)
-        xh_pi_angle = geometry.calculate_xh_picenter_angle(rctx.pi_center_arr, x_pos_arr, h_pos_np)
-        
-        if theta is None or xh_pi_angle is None: continue
-            
-        is_plevin = (dist_x_pi < max_dist and xpcn_angle < 25.0 and xh_pi_angle >= 120.0)
-        is_hudson = (dist_x_pi <= max_dist and proj_dist is not None and 
-                     proj_dist <= rctx.proj_threshold and theta <= 40.0)
-        
-        if is_plevin or is_hudson:
-            if xh_pi_angle > best_xh_angle:
-                best_xh_angle = xh_pi_angle
-                best_hit = (theta, xh_pi_angle, int(is_plevin), int(is_hudson))
+        intersection = geometry.calculate_xh_ray_p_intersection(
+            x_pos_arr, h_pos_np, rctx.pi_center_arr, rctx.pi_normal)
+        if intersection is None:
+            continue
+
+        h_hit_pos, h_ray_t = intersection
+        h_proj_dist = geometry.calculate_p_offset(h_hit_pos, rctx.pi_center_arr)
+        if h_proj_dist > rctx.p_radius:
+            continue
+
+        score = (-h_proj_dist, -h_ray_t)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_hit = (h_proj_dist, h_ray_t)
 
     if best_hit is not None:
-        b_theta, b_xh_ang, b_plevin, b_hudson = best_hit
+        h_proj_dist, h_ray_t = best_hit
         _record_hit(hits, rctx, x_cra, x_atom, "virt", dist_x_pi,
-                    b_plevin, b_hudson, x_pos_arr, b_theta, b_xh_ang, xpcn_angle, proj_dist,
+                    x_pos_arr, proj_dist, h_proj_dist, h_ray_t,
                     is_cone=True, combined_occ=combined_occ, sym_op=sym_op, h_atom=None)
 
 def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
-                x_cra, x_atom, h_name: str, dist: float, 
-                is_plevin: int, is_hudson: int, x_pos: np.ndarray,
-                theta: Optional[float], xh_ang: Optional[float], xpcn: Optional[float], 
-                proj: Optional[float], is_cone: bool = False,
+                x_cra, x_atom, h_name: str, dist: float,
+                x_pos: np.ndarray, proj: float, h_proj_dist: float, h_ray_t: float,
+                is_cone: bool = False,
                 combined_occ: float = 1.0, sym_op: int = 0,
                 h_atom: Optional[gemmi.Atom] = None):
     
@@ -618,8 +618,6 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
         'X_atom': x_atom.name,
         'H_atom': h_name,
         'dist_X_Pi': _round_float(dist, 3),
-        'is_plevin': is_plevin,
-        'is_hudson': is_hudson,
         'H_source': h_source,
         'is_trp_5ring_acceptor': is_trp_5ring,
         'is_pi_pi_tshaped': is_pi_pi_tshaped,
@@ -636,10 +634,10 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
         'X_xyz_y': _round_float(x_pos[1], 3),
         'X_xyz_z': _round_float(x_pos[2], 3),
         'seq_sep': seq_sep,
-        'theta': _round_float(theta, 2) if theta is not None else 0,
-        'angle_XH_Pi': _round_float(xh_ang, 2) if xh_ang is not None else 180,
-        'angle_XPCN': _round_float(xpcn, 2) if xpcn is not None else None,
-        'proj_dist': _round_float(proj, 3) if proj is not None else None,
+        'P_radius': _round_float(rctx.p_radius, 3),
+        'proj_dist': _round_float(proj, 3),
+        'h_proj_dist': _round_float(h_proj_dist, 3),
+        'H_ray_t': _round_float(h_ray_t, 3),
         'sym_op': sym_op,
         '_combined_occ': float(combined_occ),
         '_pi_ring_key': rctx.mode,

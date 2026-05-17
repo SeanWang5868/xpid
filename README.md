@@ -96,23 +96,22 @@ Output column names currently remain ASCII for compatibility with existing scrip
 
 ## Geometric Criteria
 
-Definitions: Cπ = ring centroid, **n** = ring normal, X = donor heavy atom, Xp = projection of X onto the π plane, H = hydrogen.
+Xpid uses a single P-model definition. P is the finite aromatic π-plane region
+used to represent the effective interaction area of the aromatic ring.
 
-### Hudson System
-
-| Parameter | Threshold |
-| :--- | :--- |
-| d(X–Cπ) | ≤ 4.5 Å |
-| angle(X–H–**n**) | ≤ 40° |
-| d(Xp–Cπ) | ≤ 1.6 Å for 5-membered rings; ≤ 2.0 Å for 6-membered rings |
-
-### Plevin System
+Definitions: X = donor heavy atom, H = hydrogen, Xp = orthogonal projection of X
+onto the aromatic plane, Hp = intersection between the X->H ray and the aromatic
+plane, and P = finite aromatic π-plane region.
 
 | Parameter | Threshold |
 | :--- | :--- |
-| d(X–Cπ) | ≤ donor-element cutoff |
-| angle(X–H–Cπ) | ≥ 120° |
-| angle(X–Cπ–**n**) | < 25° |
+| d(X, P plane) | ≤ 4.3 Å for N/O, ≤ 4.5 Å for C, ≤ 4.8 Å for S |
+| Xp in P | P radius = 1.6 Å for 5-membered rings; 2.0 Å for 6-membered rings |
+| X->H ray hits P | Hp must lie inside the same P region |
+
+The X->H ray is directional: H must lie between X and the aromatic plane. This
+prevents an infinite X-H line from being counted when the hydrogen points away
+from P.
 
 ## Command-Line Options
 
@@ -160,15 +159,17 @@ Definitions: Cπ = ring centroid, **n** = ring normal, X = donor heavy atom, Xp 
 
 ## Output Data
 
-Simple mode includes structure ID, resolution, donor/π-acceptor residue IDs, X atom, H atom, H source, d(X–Cπ), Hudson/Plevin flags, TRP 5-ring flag, and symmetry operation index.
+Simple mode includes structure ID, resolution, donor/π-acceptor residue IDs, X atom, H atom, H source, d(X, P plane), TRP 5-ring flag, T-shaped π-π flag, and symmetry operation index.
 
-Verbose mode adds secondary-structure annotations, π-center and X coordinates, angles, projection distance, sequence separation, and B-factors.
+Verbose mode adds secondary-structure annotations, P center and X coordinates, P radius, X projection distance within P, X->H ray-hit distance within P, sequence separation, and B-factors.
+
+Every reported row satisfies the P-model definition, so no separate positive/negative interaction flag is emitted.
 
 ## Notes
 
 - Same-residue donor/π-acceptor contacts are excluded.
 - The automatic monomer-library download is stored in the user cache, not inside the installed package directory.
-- Output column names currently remain ASCII (`pi_res`, `dist_X_Pi`) to avoid breaking existing scripts.
+- Output column names currently remain ASCII (`pi_res`, `dist_X_Pi`) to avoid breaking existing scripts. `dist_X_Pi` now means `d(X, P plane)`, not distance from X to the ring centroid.
 
 ## Contact
 
