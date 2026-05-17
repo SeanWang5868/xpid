@@ -96,22 +96,24 @@ Output column names currently remain ASCII for compatibility with existing scrip
 
 ## Geometric Criteria
 
-Xpid uses a single P-model definition. P is the finite aromatic π-plane region
-used to represent the effective interaction area of the aromatic ring.
+Xpid uses a single P-model definition. P is the finite aromatic π region used
+to represent the effective interaction volume of the aromatic ring.
 
 Definitions: X = donor heavy atom, H = hydrogen, Xp = orthogonal projection of X
-onto the aromatic plane, Hp = intersection between the X->H ray and the aromatic
-plane, and P = finite aromatic π-plane region.
+onto the aromatic plane, Hp = entry point where the X->H ray first intersects
+the finite P slab, and P = finite aromatic π slab.
 
 | Parameter | Threshold |
 | :--- | :--- |
 | d(X, P plane) | ≤ 4.3 Å for N/O, ≤ 4.5 Å for C, ≤ 4.8 Å for S |
 | Xp in P | P radius = 1.6 Å for 5-membered rings; 2.0 Å for 6-membered rings |
-| X->H ray hits P | Hp must lie inside the same P region |
+| P slab half-thickness | 0.5 Å above and below the aromatic plane |
+| X->H ray crosses P slab | Hp must project inside the same P radius |
 
-The X->H ray is directional: H must lie between X and the aromatic plane. This
+The X->H ray is directional: H must lie between X and the finite P slab. This
 prevents an infinite X-H line from being counted when the hydrogen points away
-from P.
+from P, while avoiding hard-boundary failures caused by treating the π region as
+a zero-thickness disk.
 
 ## Command-Line Options
 
@@ -161,7 +163,7 @@ from P.
 
 Simple mode includes structure ID, resolution, donor/π-acceptor residue IDs, X atom, H atom, H source, d(X, P plane), TRP 5-ring flag, T-shaped π-π flag, and symmetry operation index.
 
-Verbose mode adds secondary-structure annotations, P center and X coordinates, P radius, X projection distance within P, X->H ray-hit distance within P, sequence separation, and B-factors.
+Verbose mode adds secondary-structure annotations, P center and X coordinates, P radius, P slab half-thickness, X projection distance within P, X->H slab-entry distance within P, sequence separation, and B-factors.
 
 Every reported row satisfies the P-model definition, so no separate positive/negative interaction flag is emitted.
 

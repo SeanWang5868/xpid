@@ -20,20 +20,22 @@ def test_p_plane_distance_and_projection():
     assert np.isclose(geometry.calculate_p_offset(projected, p_center), np.sqrt(2.5))
 
 
-def test_xh_ray_p_intersection_requires_h_pointing_to_plane():
+def test_xh_ray_p_slab_entry_uses_near_surface():
     p_center = np.array([0., 0., 0.])
     normal = np.array([0., 0., 1.])
-    x_pos = np.array([0., 0., 3.0])
-    h_pos = np.array([0., 0., 2.0])
+    x_pos = np.array([0.83, 0., 3.97])
+    h_pos = np.array([1.13, 0., 2.9775])
 
-    intersection = geometry.calculate_xh_ray_p_intersection(x_pos, h_pos, p_center, normal)
+    entry = geometry.calculate_xh_ray_p_slab_entry(
+        x_pos, h_pos, p_center, normal, half_thickness=0.5)
 
-    assert intersection is not None
-    hit, t = intersection
-    assert np.allclose(hit, p_center)
-    assert np.isclose(t, 3.0)
+    assert entry is not None
+    hit, t = entry
+    assert np.isclose(hit[2], 0.5)
+    assert t > 1.0
+    assert np.isclose(
+        geometry.calculate_projection_dist(normal, p_center, hit),
+        1.879, atol=1e-3)
 
-    assert geometry.calculate_xh_ray_p_intersection(
-        x_pos, np.array([0., 0., 4.0]), p_center, normal) is None
-    assert geometry.calculate_xh_ray_p_intersection(
-        x_pos, np.array([1., 0., 3.0]), p_center, normal) is None
+    assert geometry.calculate_xh_ray_p_slab_entry(
+        x_pos, np.array([0.83, 0., 4.5]), p_center, normal, 0.5) is None

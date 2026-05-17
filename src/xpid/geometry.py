@@ -74,29 +74,42 @@ def point_is_in_p_region(point_on_plane: np.ndarray, p_center: np.ndarray, p_rad
     return calculate_p_offset(point_on_plane, p_center) <= p_radius
 
 
-def calculate_xh_ray_p_intersection(
+def calculate_xh_ray_p_slab_entry(
     x_pos: np.ndarray,
     h_pos: np.ndarray,
     plane_point: np.ndarray,
     normal: np.ndarray,
+    half_thickness: float,
     min_t: float = 1.0,
 ) -> Optional[Tuple[np.ndarray, float]]:
-    """Intersect the X->H ray with the P plane.
+    """Intersect the directional X->H ray with the near surface of the P slab.
 
-    The ray is parameterized as X + t(H - X). Requiring t > 1 ensures that H
-    lies between X and the P plane, rather than merely defining an infinite
-    line that crosses the plane behind X or before H.
+    The finite P slab is centered on the aromatic plane and extends
+    +/- half_thickness along the plane normal. For a donor X outside the slab,
+    the relevant entry surface is the face on the same side of the aromatic
+    plane as X. Requiring t > 1 keeps the same X->H directionality: H must lie
+    between X and the P slab.
     """
-    direction = h_pos - x_pos
-    denom = float(np.dot(direction, normal))
-    if abs(denom) < EPSILON:
+    norm_n = np.linalg.norm(normal)
+    if norm_n == 0:
         return None
 
-    t = float(np.dot(plane_point - x_pos, normal) / denom)
+    unit_normal = normal / norm_n
+    z_x = float(np.dot(x_pos - plane_point, unit_normal))
+    if abs(z_x) <= half_thickness:
+        return None
+
+    direction = h_pos - x_pos
+    z_dir = float(np.dot(direction, unit_normal))
+    if abs(z_dir) < EPSILON:
+        return None
+
+    entry_z = np.copysign(half_thickness, z_x)
+    t = (entry_z - z_x) / z_dir
     if t <= min_t:
         return None
 
-    return x_pos + t * direction, t
+    return x_pos + t * direction, float(t)
 
 def calculate_projection_dist(normal: np.ndarray, pi_center: np.ndarray, x_pos: np.ndarray) -> Optional[float]:
     projection_point = project_point_to_plane(x_pos, pi_center, normal)

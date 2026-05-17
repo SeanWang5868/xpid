@@ -243,6 +243,9 @@ P_RADIUS_BY_RING_SIZE = {
     5: 1.6,
     6: 2.0,
 }
+# Half-thickness of the finite P slab used for the X-H directional ray test.
+# X-position is still filtered against the zero-thickness P-plane projection.
+P_SLAB_HALF_THICKNESS = 0.5
 
 # Backwards-compatible name for callers that imported the old threshold table.
 THRESHOLDS = P_PLANE_DMAX

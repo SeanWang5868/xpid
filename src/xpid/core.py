@@ -141,6 +141,7 @@ class _RingContext(NamedTuple):
     min_occ: float
     avg_pi_occ: float
     p_radius: float
+    p_slab_half_thickness: float
 
 BLOCKING_METALS = {
     'ZN', 'FE', 'CU', 'MN', 'MG', 'CO', 'NI', 'CA', 'CD', 'HG',
@@ -303,6 +304,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         pi_center_arr=pi_center_arr, pi_normal=pi_normal, pi_b_mean=pi_b_mean,
         pi_alt=pi_alt, mode=mode, ring_size=ring_size, min_occ=min_occ,
         avg_pi_occ=avg_pi_occ, p_radius=p_radius,
+        p_slab_half_thickness=config.P_SLAB_HALF_THICKNESS,
     )
     
     x_candidates = ns.find_atoms(pi_center, alt=pi_alt or "\0", radius=config.DIST_SEARCH_LIMIT)
@@ -429,14 +431,16 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
         
         h_combined_occ = min(combined_occ, h_atom.occ)
         
-        intersection = geometry.calculate_xh_ray_p_intersection(
-            x_pos_arr, h_pos_arr, rctx.pi_center_arr, rctx.pi_normal)
+        intersection = geometry.calculate_xh_ray_p_slab_entry(
+            x_pos_arr, h_pos_arr, rctx.pi_center_arr, rctx.pi_normal,
+            rctx.p_slab_half_thickness)
         if intersection is None:
             continue
 
         h_hit_pos, h_ray_t = intersection
-        h_proj_dist = geometry.calculate_p_offset(h_hit_pos, rctx.pi_center_arr)
-        if h_proj_dist > rctx.p_radius:
+        h_proj_dist = geometry.calculate_projection_dist(
+            rctx.pi_normal, rctx.pi_center_arr, h_hit_pos)
+        if h_proj_dist is None or h_proj_dist > rctx.p_radius:
             continue
 
         found = True
@@ -551,14 +555,16 @@ def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name
     best_score = None
     
     for h_pos_np in h_candidates_cone:
-        intersection = geometry.calculate_xh_ray_p_intersection(
-            x_pos_arr, h_pos_np, rctx.pi_center_arr, rctx.pi_normal)
+        intersection = geometry.calculate_xh_ray_p_slab_entry(
+            x_pos_arr, h_pos_np, rctx.pi_center_arr, rctx.pi_normal,
+            rctx.p_slab_half_thickness)
         if intersection is None:
             continue
 
         h_hit_pos, h_ray_t = intersection
-        h_proj_dist = geometry.calculate_p_offset(h_hit_pos, rctx.pi_center_arr)
-        if h_proj_dist > rctx.p_radius:
+        h_proj_dist = geometry.calculate_projection_dist(
+            rctx.pi_normal, rctx.pi_center_arr, h_hit_pos)
+        if h_proj_dist is None or h_proj_dist > rctx.p_radius:
             continue
 
         score = (-h_proj_dist, -h_ray_t)
@@ -635,6 +641,7 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
         'X_xyz_z': _round_float(x_pos[2], 3),
         'seq_sep': seq_sep,
         'P_radius': _round_float(rctx.p_radius, 3),
+        'P_slab_half_thickness': _round_float(rctx.p_slab_half_thickness, 3),
         'proj_dist': _round_float(proj, 3),
         'h_proj_dist': _round_float(h_proj_dist, 3),
         'H_ray_t': _round_float(h_ray_t, 3),

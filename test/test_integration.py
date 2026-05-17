@@ -222,6 +222,24 @@ def test_p_model_rejects_x_projection_outside_p():
     assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
 
 
+def test_p_slab_accepts_near_edge_directional_ray():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (0.83, 0.0, 3.97)))
+    ser.add_atom(_atom("HG", "H", (1.13, 0.0, 2.9775)))
+    chain.add_residue(ser)
+
+    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+
+    assert len(hits) == 1
+    assert hits[0]["proj_dist"] == 0.83
+    assert hits[0]["h_proj_dist"] == 1.879
+    assert hits[0]["P_slab_half_thickness"] == 0.5
+
+
 def test_hydrogen_merge_preserves_residues_with_experimental_h(monkeypatch):
     st = gemmi.Structure()
     st.cell = gemmi.UnitCell(30, 30, 30, 90, 90, 90)
