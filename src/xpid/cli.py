@@ -35,6 +35,16 @@ H_MODE_MAP = {
 logger = logging.getLogger("xpid")
 
 
+SYSTEM_SUMMARY_KEYS = (
+    "hudson",
+    "plevin",
+    "p_slab",
+    "hudson_plevin_union",
+    "hudson_plevin",
+    "all_three",
+)
+
+
 class TaskPacket(NamedTuple):
     """All parameters needed to process one structure file."""
     filepath: Path
@@ -73,12 +83,37 @@ def setup_logging(log_file: Path):
     )
 
 
+def empty_system_summary() -> Dict[str, int]:
+    return {key: 0 for key in SYSTEM_SUMMARY_KEYS}
+
+
+def summarize_systems(results: List[Dict[str, Any]]) -> Dict[str, int]:
+    summary = empty_system_summary()
+    for row in results:
+        is_hudson = int(row.get("is_hudson", 0))
+        is_plevin = int(row.get("is_plevin", 0))
+        is_p_slab = int(row.get("is_p_slab", 0))
+
+        summary["hudson"] += is_hudson
+        summary["plevin"] += is_plevin
+        summary["p_slab"] += is_p_slab
+        summary["hudson_plevin_union"] += int(bool(is_hudson or is_plevin))
+        summary["hudson_plevin"] += int(bool(is_hudson and is_plevin))
+        summary["all_three"] += int(bool(is_hudson and is_plevin and is_p_slab))
+    return summary
+
+
+def add_system_summary(total: Dict[str, int], chunk: Dict[str, int]):
+    for key in SYSTEM_SUMMARY_KEYS:
+        total[key] += chunk.get(key, 0)
+
+
 # ---------------------------------------------------------------------------
 # Per-file worker (runs in multiprocessing pool)
 # ---------------------------------------------------------------------------
 
 def process_one_file(task: TaskPacket):
-    """Process a single structure file. Returns (error, count, results, path)."""
+    """Process a single structure file. Returns (error, count, results, path, system_summary)."""
     output_dir = Path(task.output_dir_str)
     pdb_code = task.filepath.stem.split('.')[0].lower()
 
@@ -86,13 +121,13 @@ def process_one_file(task: TaskPacket):
         structure = gemmi.read_structure(str(task.filepath))
 
         if not structure or len(structure) == 0:
-            return f"Empty or invalid structure: {task.filepath}", 0, [], None
+            return f"Empty or invalid structure: {task.filepath}", 0, [], None, empty_system_summary()
 
         if task.h_mode > 0:
             structure = prep.add_hydrogens_memory(
                 structure, h_change_val=task.h_mode)
             if structure is None:
-                return f"Hydrogen addition failed: {task.filepath}", 0, [], None
+                return f"Hydrogen addition failed: {task.filepath}", 0, [], None, empty_system_summary()
 
         results = core.detect_interactions_in_structure(
             structure,
@@ -109,18 +144,19 @@ def process_one_file(task: TaskPacket):
         )
 
         count = len(results)
+        system_summary = summarize_systems(results)
 
         if task.separate:
             out_path = output_dir / f"{pdb_code}.{task.ftype_arg}"
             with ResultStreamer(out_path, task.ftype_arg, task.verbose) as streamer:
                 streamer.write_chunk(results)
-            return None, count, [], str(out_path)
+            return None, count, [], str(out_path), system_summary
         else:
-            return None, count, results, None
+            return None, count, results, None, system_summary
 
     except Exception as e:
         import traceback
-        return f"{task.filepath}: {e}\n{traceback.format_exc()}", 0, [], None
+        return f"{task.filepath}: {e}\n{traceback.format_exc()}", 0, [], None, empty_system_summary()
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +295,7 @@ def main():
 
     error_logs: List[str] = []
     total_found = 0
+    system_totals = empty_system_summary()
 
     try:
         merge_file_path = None
@@ -270,13 +307,14 @@ def main():
             streamer.__enter__()
 
         with multiprocessing.Pool(args.jobs, maxtasksperchild=100) as pool:
-            for i, (err, count, data, out_path) in enumerate(
+            for i, (err, count, data, out_path, system_summary) in enumerate(
                     pool.imap_unordered(process_one_file, tasks), 1):
                 if err:
                     error_logs.append(err)
                     logging.warning(f"\n[WARN] {err}")
 
                 total_found += count
+                add_system_summary(system_totals, system_summary)
 
                 if not args.separate and data:
                     streamer.write_chunk(data)
@@ -294,6 +332,12 @@ def main():
         # Step 4: Summary
         print("-" * 60)
         print(f"[SUMMARY] Total XH-π interactions detected: {total_found}")
+        print(f"[SUMMARY] Hudson-positive       : {system_totals['hudson']}")
+        print(f"[SUMMARY] Plevin-positive       : {system_totals['plevin']}")
+        print(f"[SUMMARY] P-slab-positive       : {system_totals['p_slab']}")
+        print(f"[SUMMARY] Hudson/Plevin union   : {system_totals['hudson_plevin_union']}")
+        print(f"[SUMMARY] Hudson+Plevin overlap : {system_totals['hudson_plevin']}")
+        print(f"[SUMMARY] All-three overlap     : {system_totals['all_three']}")
 
         if error_logs:
             print(f"[WARNING] {len(error_logs)} files failed processing. Check log for details.")

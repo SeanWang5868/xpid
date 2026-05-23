@@ -1,5 +1,5 @@
 import gemmi
-from xpid import core, config, prep
+from xpid import cli, core, config, prep
 
 
 def _atom(name, element, xyz, b_iso=10.0, occ=1.0, altloc="\0"):
@@ -156,6 +156,9 @@ def test_lower_occupancy_altloc_can_contribute_interaction():
     assert len(hits) == 1
     assert hits[0]["X_atom"] == "OG"
     assert hits[0]["dist_X_Pi"] == 3.0
+    assert hits[0]["is_hudson"] == 1
+    assert hits[0]["is_plevin"] == 1
+    assert hits[0]["is_p_slab"] == 1
 
 
 def test_duplicate_altloc_hits_are_collapsed_to_best_occupancy():
@@ -174,6 +177,93 @@ def test_duplicate_altloc_hits_are_collapsed_to_best_occupancy():
 
     assert len(hits) == 1
     assert hits[0]["dist_X_Pi"] == 3.0
+
+
+def test_p_model_uses_plane_distance_not_centroid_distance():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (1.9, 0.0, 4.0)))
+    ser.add_atom(_atom("HG", "H", (1.9, 0.0, 3.0)))
+    chain.add_residue(ser)
+
+    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+
+    assert len(hits) == 1
+    assert hits[0]["dist_X_Pi"] == 4.0
+    assert hits[0]["dist_X_centroid"] == 4.428
+    assert hits[0]["proj_dist"] == 1.9
+    assert hits[0]["h_proj_dist"] == 1.9
+    assert hits[0]["is_hudson"] == 0
+    assert hits[0]["is_plevin"] == 0
+    assert hits[0]["is_p_slab"] == 1
+
+
+def test_p_model_rejects_h_ray_that_misses_p():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.0)))
+    ser.add_atom(_atom("HG", "H", (1.0, 0.0, 3.0)))
+    chain.add_residue(ser)
+
+    assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+
+
+def test_p_model_rejects_x_projection_outside_p():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (2.1, 0.0, 3.0)))
+    ser.add_atom(_atom("HG", "H", (2.1, 0.0, 2.0)))
+    chain.add_residue(ser)
+
+    assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+
+
+def test_p_slab_accepts_near_edge_directional_ray():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (0.83, 0.0, 3.97)))
+    ser.add_atom(_atom("HG", "H", (1.13, 0.0, 2.9775)))
+    chain.add_residue(ser)
+
+    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+
+    assert len(hits) == 1
+    assert hits[0]["proj_dist"] == 0.83
+    assert hits[0]["h_proj_dist"] == 1.879
+    assert hits[0]["P_slab_half_thickness"] == 0.5
+    assert hits[0]["is_p_slab"] == 1
+
+
+def test_legacy_hudson_hit_is_retained_when_p_slab_fails():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (1.9, 0.0, 3.0)))
+    ser.add_atom(_atom("HG", "H", (2.4, 0.0, 2.134)))
+    chain.add_residue(ser)
+
+    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+
+    assert len(hits) == 1
+    assert hits[0]["is_hudson"] == 1
+    assert hits[0]["is_plevin"] == 0
+    assert hits[0]["is_p_slab"] == 0
+    assert hits[0]["h_proj_dist"] is not None
+    assert hits[0]["h_proj_dist"] > hits[0]["P_radius"]
 
 
 def test_hydrogen_merge_preserves_residues_with_experimental_h(monkeypatch):
@@ -230,3 +320,20 @@ def test_same_residue_donor_is_excluded():
     phe.add_atom(_atom("H", "H", (0.0, 0.0, 2.0)))
 
     assert core.detect_interactions_in_structure(st, "test") == []
+
+
+def test_cli_system_summary_counts_union_and_overlaps():
+    rows = [
+        {"is_hudson": 1, "is_plevin": 0, "is_p_slab": 0},
+        {"is_hudson": 0, "is_plevin": 1, "is_p_slab": 1},
+        {"is_hudson": 1, "is_plevin": 1, "is_p_slab": 1},
+    ]
+
+    summary = cli.summarize_systems(rows)
+
+    assert summary["hudson"] == 2
+    assert summary["plevin"] == 2
+    assert summary["p_slab"] == 2
+    assert summary["hudson_plevin_union"] == 3
+    assert summary["hudson_plevin"] == 1
+    assert summary["all_three"] == 1

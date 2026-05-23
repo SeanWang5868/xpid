@@ -229,13 +229,29 @@ BOND_LENGTHS = {
 TETRAHEDRAL_ANGLE = 109.5 
 
 DIST_SEARCH_LIMIT = 6.0
-THRESHOLDS = {
+
+# Unified P-model thresholds. P is the finite aromatic pi-plane region used
+# for X projection and X-H ray intersection tests.
+P_PLANE_DMAX = {
     'N': 4.3,
     'O': 4.3,
     'C': 4.5,
     'S': 4.8, 
     'default': 4.5
 }
+HUDSON_THETA_MAX = 40.0
+PLEVIN_XPCN_MAX = 25.0
+PLEVIN_XH_PI_MIN = 120.0
+P_RADIUS_BY_RING_SIZE = {
+    5: 1.6,
+    6: 2.0,
+}
+# Half-thickness of the finite P slab used for the X-H directional ray test.
+# X-position is still filtered against the zero-thickness P-plane projection.
+P_SLAB_HALF_THICKNESS = 0.5
+
+# Backwards-compatible name for callers that imported the old threshold table.
+THRESHOLDS = P_PLANE_DMAX
 MIN_COVALENT_XH = 0.5
 DIST_CUTOFF_H = 1.3
 

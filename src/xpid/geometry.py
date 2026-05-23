@@ -1,11 +1,13 @@
 """
 geometry.py
-Geometric calculations including Plevin, Hudson, and Cone alignment.
+Geometric calculations for Hudson, Plevin, P-slab, and cone alignment.
 """
 import numpy as np
 import gemmi
 from typing import Tuple, Optional, List
 from . import config
+
+EPSILON = 1e-8
 
 def get_pi_info(atoms: List[gemmi.Atom]) -> Tuple[gemmi.Position, np.ndarray, np.ndarray, float]:
     positions = np.array([[atom.pos.x, atom.pos.y, atom.pos.z] for atom in atoms])
@@ -44,57 +46,122 @@ def calculate_planarity_deviation(atoms: List[gemmi.Atom]) -> float:
 def calculate_distance(pos1_array: np.ndarray, pos2_array: np.ndarray) -> float:
     return np.linalg.norm(pos1_array - pos2_array)
 
+
+def calculate_plane_distance(point: np.ndarray, plane_point: np.ndarray, normal: np.ndarray) -> Optional[float]:
+    """Perpendicular distance from a point to the P plane."""
+    norm_n = np.linalg.norm(normal)
+    if norm_n == 0:
+        return None
+    return abs(float(np.dot(point - plane_point, normal) / norm_n))
+
+
+def project_point_to_plane(point: np.ndarray, plane_point: np.ndarray, normal: np.ndarray) -> Optional[np.ndarray]:
+    """Orthogonally project a point onto the P plane."""
+    denominator = float(np.dot(normal, normal))
+    if denominator == 0:
+        return None
+    t = float(np.dot(point - plane_point, normal) / denominator)
+    return point - t * normal
+
+
+def calculate_p_offset(point_on_plane: np.ndarray, p_center: np.ndarray) -> float:
+    """Distance from a point on the P plane to the center of the finite P region."""
+    return calculate_distance(point_on_plane, p_center)
+
+
+def point_is_in_p_region(point_on_plane: np.ndarray, p_center: np.ndarray, p_radius: float) -> bool:
+    """Return True when a projected point lies inside the finite P region."""
+    return calculate_p_offset(point_on_plane, p_center) <= p_radius
+
+
 def calculate_xpcn_angle(x_pos: np.ndarray, pi_center: np.ndarray, pi_normal: np.ndarray) -> Optional[float]:
+    """Legacy Plevin angle between X->centroid and the ring normal."""
     v_x_pi = pi_center - x_pos
     norm_v = np.linalg.norm(v_x_pi)
     norm_n = np.linalg.norm(pi_normal)
-    if norm_v == 0 or norm_n == 0: return None
+    if norm_v == 0 or norm_n == 0:
+        return None
 
-    dot_product = np.dot(v_x_pi, pi_normal)
-    cos_theta = np.clip(dot_product / (norm_v * norm_n), -1.0, 1.0)
+    cos_theta = np.clip(np.dot(v_x_pi, pi_normal) / (norm_v * norm_n), -1.0, 1.0)
     angle = np.degrees(np.arccos(cos_theta))
-    
-    if angle > 90: angle = 180 - angle
-    return angle
+    return 180 - angle if angle > 90 else angle
+
 
 def calculate_xh_picenter_angle(pi_center: np.ndarray, x_pos: np.ndarray, h_pos: np.ndarray) -> Optional[float]:
+    """Legacy Plevin X-H-centroid angle."""
     v_hx = x_pos - h_pos
-    v_hc = pi_center - h_pos 
+    v_hc = pi_center - h_pos
     norm_hx = np.linalg.norm(v_hx)
     norm_hc = np.linalg.norm(v_hc)
-    if norm_hx == 0 or norm_hc == 0: return None
-    
+    if norm_hx == 0 or norm_hc == 0:
+        return None
+
     cos_theta = np.clip(np.dot(v_hx, v_hc) / (norm_hx * norm_hc), -1.0, 1.0)
     return np.degrees(np.arccos(cos_theta))
 
+
 def calculate_hudson_theta(pi_center: np.ndarray, x_pos: np.ndarray, h_pos: np.ndarray, normal: np.ndarray) -> Optional[float]:
+    """Legacy Hudson angle between X-H and the ring normal.
+
+    Returns None if the X-H vector points away from the ring centroid.
+    """
     v_x_pi = pi_center - x_pos
     v_xh = h_pos - x_pos
-    norm_xpi = np.linalg.norm(v_x_pi)
-    
-    if norm_xpi == 0: return None
+    if np.dot(v_xh, v_x_pi) <= 0:
+        return None
 
-    # Projection check: H must point towards ring
-    proj_len = np.dot(v_xh, v_x_pi) / norm_xpi
-    
-    if proj_len > 0:
-        norm_n = np.linalg.norm(normal)
-        norm_xh = np.linalg.norm(v_xh)
-        if norm_n == 0 or norm_xh == 0: return None
-        
-        cos_angle = np.clip(np.dot(normal, v_xh) / (norm_n * norm_xh), -1.0, 1.0)
-        angle = np.degrees(np.arccos(cos_angle))
-        if angle >= 90: angle = 180 - angle
-        return angle
-    return None
+    norm_n = np.linalg.norm(normal)
+    norm_xh = np.linalg.norm(v_xh)
+    if norm_n == 0 or norm_xh == 0:
+        return None
+
+    cos_angle = np.clip(np.dot(normal, v_xh) / (norm_n * norm_xh), -1.0, 1.0)
+    angle = np.degrees(np.arccos(cos_angle))
+    return 180 - angle if angle >= 90 else angle
+
+
+def calculate_xh_ray_p_slab_entry(
+    x_pos: np.ndarray,
+    h_pos: np.ndarray,
+    plane_point: np.ndarray,
+    normal: np.ndarray,
+    half_thickness: float,
+    min_t: float = 1.0,
+) -> Optional[Tuple[np.ndarray, float]]:
+    """Intersect the directional X->H ray with the near surface of the P slab.
+
+    The finite P slab is centered on the aromatic plane and extends
+    +/- half_thickness along the plane normal. For a donor X outside the slab,
+    the relevant entry surface is the face on the same side of the aromatic
+    plane as X. Requiring t > 1 keeps the same X->H directionality: H must lie
+    between X and the P slab.
+    """
+    norm_n = np.linalg.norm(normal)
+    if norm_n == 0:
+        return None
+
+    unit_normal = normal / norm_n
+    z_x = float(np.dot(x_pos - plane_point, unit_normal))
+    if abs(z_x) <= half_thickness:
+        return None
+
+    direction = h_pos - x_pos
+    z_dir = float(np.dot(direction, unit_normal))
+    if abs(z_dir) < EPSILON:
+        return None
+
+    entry_z = np.copysign(half_thickness, z_x)
+    t = (entry_z - z_x) / z_dir
+    if t <= min_t:
+        return None
+
+    return x_pos + t * direction, float(t)
 
 def calculate_projection_dist(normal: np.ndarray, pi_center: np.ndarray, x_pos: np.ndarray) -> Optional[float]:
-    numerator = np.dot(normal, pi_center - x_pos)
-    denominator = np.dot(normal, normal)
-    if denominator == 0: return None
-    t = numerator / denominator
-    projection_point = x_pos + t * normal
-    return np.linalg.norm(projection_point - pi_center)
+    projection_point = project_point_to_plane(x_pos, pi_center, normal)
+    if projection_point is None:
+        return None
+    return calculate_p_offset(projection_point, pi_center)
 
 def check_hbond_locked(x_pos: np.ndarray, 
                        orig_h_positions: list, 
