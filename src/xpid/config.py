@@ -239,6 +239,9 @@ P_PLANE_DMAX = {
     'S': 4.8, 
     'default': 4.5
 }
+HUDSON_THETA_MAX = 40.0
+PLEVIN_XPCN_MAX = 25.0
+PLEVIN_XH_PI_MIN = 120.0
 P_RADIUS_BY_RING_SIZE = {
     5: 1.6,
     6: 2.0,

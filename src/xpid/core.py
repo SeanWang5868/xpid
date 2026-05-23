@@ -1,6 +1,6 @@
 """
 core.py
-Core logic for detecting XH-π interactions using the P model.
+Core logic for detecting XH-π interactions with Hudson, Plevin, and P-slab labels.
 Track 1: Explicit H (Default)
 Track 2: Implicit/Cone rescue (enabled by default via use_cone=True)
 """
@@ -21,6 +21,11 @@ def _pos_to_arr(pos: gemmi.Position) -> np.ndarray:
 
 def _round_float(value, ndigits: int):
     return round(float(value), ndigits)
+
+
+def _score_float(hit: Dict[str, Any], key: str, default: float = 999.0) -> float:
+    value = hit.get(key)
+    return default if value is None else float(value)
 
 
 def _altloc(atom: gemmi.Atom) -> str:
@@ -82,9 +87,12 @@ def _dedup_key(hit: Dict[str, Any]) -> tuple:
 def _dedup_score(hit: Dict[str, Any]) -> tuple:
     return (
         hit.get("_combined_occ", 0.0),
-        -float(hit.get("dist_X_Pi", 999.0)),
-        -float(hit.get("h_proj_dist", 999.0)),
-        -float(hit.get("proj_dist", 999.0)),
+        int(hit.get("is_hudson", 0)) + int(hit.get("is_plevin", 0)) + int(hit.get("is_p_slab", 0)),
+        int(hit.get("is_p_slab", 0)),
+        int(hit.get("is_hudson", 0)) + int(hit.get("is_plevin", 0)),
+        -_score_float(hit, "dist_X_Pi"),
+        -_score_float(hit, "h_proj_dist"),
+        -_score_float(hit, "proj_dist"),
     )
 
 
@@ -98,6 +106,52 @@ def _h_source(h_atom: Optional[gemmi.Atom], is_cone: bool) -> str:
 
 def _is_cation_pi_donor(res_name: str, atom_name: str) -> bool:
     return (res_name, atom_name) in config.CATION_DONORS
+
+
+def _evaluate_systems(rctx: "_RingContext", x_elem: str, x_pos: np.ndarray, h_pos: np.ndarray,
+                      dist_x_plane: Optional[float], dist_x_centroid: float,
+                      proj_dist: Optional[float]) -> Dict[str, Any]:
+    """Calculate Hudson, Plevin, and P-slab metrics for one X-H candidate."""
+    theta = geometry.calculate_hudson_theta(rctx.pi_center_arr, x_pos, h_pos, rctx.pi_normal)
+    xpcn_angle = geometry.calculate_xpcn_angle(x_pos, rctx.pi_center_arr, rctx.pi_normal)
+    xh_pi_angle = geometry.calculate_xh_picenter_angle(rctx.pi_center_arr, x_pos, h_pos)
+
+    p_dmax = config.P_PLANE_DMAX.get(x_elem, config.P_PLANE_DMAX['default'])
+    h_proj_dist = None
+    h_ray_t = None
+    slab_entry = geometry.calculate_xh_ray_p_slab_entry(
+        x_pos, h_pos, rctx.pi_center_arr, rctx.pi_normal, rctx.p_slab_half_thickness)
+    if slab_entry is not None:
+        h_hit_pos, h_ray_t = slab_entry
+        h_proj_dist = geometry.calculate_projection_dist(rctx.pi_normal, rctx.pi_center_arr, h_hit_pos)
+
+    is_hudson = int(
+        dist_x_centroid <= p_dmax and
+        proj_dist is not None and proj_dist <= rctx.p_radius and
+        theta is not None and theta <= config.HUDSON_THETA_MAX
+    )
+    is_plevin = int(
+        dist_x_centroid < p_dmax and
+        xpcn_angle is not None and xpcn_angle < config.PLEVIN_XPCN_MAX and
+        xh_pi_angle is not None and xh_pi_angle >= config.PLEVIN_XH_PI_MIN
+    )
+    is_p_slab = int(
+        dist_x_plane is not None and dist_x_plane <= p_dmax and
+        proj_dist is not None and proj_dist <= rctx.p_radius and
+        h_proj_dist is not None and h_proj_dist <= rctx.p_radius
+    )
+
+    return {
+        'dist_X_centroid': dist_x_centroid,
+        'theta': theta,
+        'angle_XPCN': xpcn_angle,
+        'angle_XH_Pi': xh_pi_angle,
+        'h_proj_dist': h_proj_dist,
+        'H_ray_t': h_ray_t,
+        'is_hudson': is_hudson,
+        'is_plevin': is_plevin,
+        'is_p_slab': is_p_slab,
+    }
 
 
 def _deduplicate_hits(hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -363,32 +417,40 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         else:
             x_pos_arr = _pos_to_arr(x_atom.pos)
         dist_x_pi = geometry.calculate_plane_distance(x_pos_arr, pi_center_arr, pi_normal)
-        if dist_x_pi is None:
-            continue
+        dist_x_centroid = geometry.calculate_distance(x_pos_arr, pi_center_arr)
 
         max_plane_dist = config.P_PLANE_DMAX.get(x_elem, config.P_PLANE_DMAX['default'])
 
-        if dist_x_pi > max_plane_dist:
+        if dist_x_centroid > max_plane_dist and (
+            dist_x_pi is None or dist_x_pi > max_plane_dist
+        ):
             continue
 
         proj_dist = geometry.calculate_projection_dist(pi_normal, pi_center_arr, x_pos_arr)
-        if proj_dist is None or proj_dist > rctx.p_radius:
-            continue
         
         sym_op = x_mark.image_idx if is_sym_mate else 0
 
         # --- Track 1: Explicit H ---
-        found, orig_h_positions = _run_explicit_track(
+        found_systems, orig_h_positions = _run_explicit_track(
             rctx, x_cra, x_atom, x_mark, x_pos_arr, is_sym_mate,
-            dist_x_pi, proj_dist, combined_occ, sym_op, hits
+            x_elem, dist_x_pi, dist_x_centroid, proj_dist, combined_occ, sym_op, hits
         )
 
         # --- Track 2: Cone rescue ---
-        if not found and use_cone and allow_cone_scan:
+        # Cone rescue is evaluated per system family. This preserves the old
+        # single-system behavior when Hudson/Plevin or P-slab need rescue even
+        # if another system already had an explicit-H hit.
+        cone_needed_systems = set()
+        if not (found_systems & {"hudson", "plevin"}):
+            cone_needed_systems.update({"hudson", "plevin"})
+        if "p_slab" not in found_systems:
+            cone_needed_systems.add("p_slab")
+
+        if cone_needed_systems and use_cone and allow_cone_scan:
             _run_cone_track(
                 rctx, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
-                x_pos_arr, is_sym_mate, dist_x_pi, proj_dist,
-                combined_occ, orig_h_positions, sym_op, hits
+                x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
+                combined_occ, orig_h_positions, sym_op, cone_needed_systems, hits
             )
 
     return hits
@@ -396,10 +458,10 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
 
 def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
                         x_pos_arr, is_sym_mate,
-                        dist_x_pi, proj_dist,
+                        x_elem, dist_x_pi, dist_x_centroid, proj_dist,
                         combined_occ, sym_op, hits) -> tuple:
-    """Track 1: Explicit hydrogen geometry. Returns (found_hit, orig_h_positions)."""
-    found = False
+    """Track 1: Explicit hydrogen geometry. Returns (found_systems, orig_h_positions)."""
+    found_systems: Set[str] = set()
     orig_h_positions = []
     
     h_search_pos = x_mark.pos if is_sym_mate else x_atom.pos
@@ -430,30 +492,28 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
             continue
         
         h_combined_occ = min(combined_occ, h_atom.occ)
-        
-        intersection = geometry.calculate_xh_ray_p_slab_entry(
-            x_pos_arr, h_pos_arr, rctx.pi_center_arr, rctx.pi_normal,
-            rctx.p_slab_half_thickness)
-        if intersection is None:
+        metrics = _evaluate_systems(
+            rctx, x_elem, x_pos_arr, h_pos_arr, dist_x_pi, dist_x_centroid, proj_dist)
+        if not (metrics['is_hudson'] or metrics['is_plevin'] or metrics['is_p_slab']):
             continue
 
-        h_hit_pos, h_ray_t = intersection
-        h_proj_dist = geometry.calculate_projection_dist(
-            rctx.pi_normal, rctx.pi_center_arr, h_hit_pos)
-        if h_proj_dist is None or h_proj_dist > rctx.p_radius:
-            continue
+        if metrics['is_hudson']:
+            found_systems.add("hudson")
+        if metrics['is_plevin']:
+            found_systems.add("plevin")
+        if metrics['is_p_slab']:
+            found_systems.add("p_slab")
 
-        found = True
         _record_hit(hits, rctx, x_cra, x_atom, h_atom.name, dist_x_pi,
-                    x_pos_arr, proj_dist, h_proj_dist, h_ray_t,
+                    dist_x_centroid, x_pos_arr, proj_dist, metrics,
                     is_cone=False, combined_occ=h_combined_occ, sym_op=sym_op, h_atom=h_atom)
     
-    return found, orig_h_positions
+    return found_systems, orig_h_positions
 
 
 def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
-                    x_pos_arr, is_sym_mate, dist_x_pi, proj_dist,
-                    combined_occ, orig_h_positions, sym_op, hits):
+                    x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
+                    combined_occ, orig_h_positions, sym_op, needed_systems: Set[str], hits):
     """Track 2: Cone rescue for rotatable groups."""
     if x_res_name not in config.ROTATABLE_MAPPING:
         return
@@ -550,37 +610,71 @@ def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name
                                 
                         h_candidates_cone.append(h_pos_wobbled)
 
-    # Score and select best cone candidate
-    best_hit = None
-    best_score = None
+    # Score and select best cone candidates independently for the legacy
+    # Hudson/Plevin family and for the P-slab model. Their historical
+    # single-system behavior used different scoring rules.
+    legacy_best = None
+    legacy_best_score = None
+    p_slab_best = None
+    p_slab_best_score = None
+    needs_legacy = bool(needed_systems & {"hudson", "plevin"})
+    needs_p_slab = "p_slab" in needed_systems
     
     for h_pos_np in h_candidates_cone:
-        intersection = geometry.calculate_xh_ray_p_slab_entry(
-            x_pos_arr, h_pos_np, rctx.pi_center_arr, rctx.pi_normal,
-            rctx.p_slab_half_thickness)
-        if intersection is None:
-            continue
+        metrics = _evaluate_systems(
+            rctx, x_elem, x_pos_arr, h_pos_np, dist_x_pi, dist_x_centroid, proj_dist)
 
-        h_hit_pos, h_ray_t = intersection
-        h_proj_dist = geometry.calculate_projection_dist(
-            rctx.pi_normal, rctx.pi_center_arr, h_hit_pos)
-        if h_proj_dist is None or h_proj_dist > rctx.p_radius:
-            continue
+        if needs_legacy and (metrics['is_hudson'] or metrics['is_plevin']):
+            legacy_score = metrics['angle_XH_Pi'] if metrics['angle_XH_Pi'] is not None else -1.0
+            if legacy_best_score is None or legacy_score > legacy_best_score:
+                legacy_best_score = legacy_score
+                legacy_best = metrics
 
-        score = (-h_proj_dist, -h_ray_t)
-        if best_score is None or score > best_score:
-            best_score = score
-            best_hit = (h_proj_dist, h_ray_t)
+        if needs_p_slab and metrics['is_p_slab']:
+            h_proj_score = metrics['h_proj_dist'] if metrics['h_proj_dist'] is not None else 999.0
+            h_ray_score = metrics['H_ray_t'] if metrics['H_ray_t'] is not None else 999.0
+            p_slab_score = (-h_proj_score, -h_ray_score)
+            if p_slab_best_score is None or p_slab_score > p_slab_best_score:
+                p_slab_best_score = p_slab_score
+                p_slab_best = metrics
 
-    if best_hit is not None:
-        h_proj_dist, h_ray_t = best_hit
+    combined = _merge_cone_system_metrics(legacy_best, p_slab_best, needs_legacy, needs_p_slab)
+    if combined is not None:
         _record_hit(hits, rctx, x_cra, x_atom, "virt", dist_x_pi,
-                    x_pos_arr, proj_dist, h_proj_dist, h_ray_t,
+                    dist_x_centroid, x_pos_arr, proj_dist, combined,
                     is_cone=True, combined_occ=combined_occ, sym_op=sym_op, h_atom=None)
+
+
+def _merge_cone_system_metrics(legacy_best: Optional[Dict[str, Any]],
+                               p_slab_best: Optional[Dict[str, Any]],
+                               needs_legacy: bool,
+                               needs_p_slab: bool) -> Optional[Dict[str, Any]]:
+    """Merge independently selected cone candidates into one reported virtual hit."""
+    if legacy_best is None and p_slab_best is None:
+        return None
+
+    base = dict(legacy_best if legacy_best is not None else p_slab_best)
+
+    base['is_hudson'] = int(needs_legacy and legacy_best is not None and legacy_best['is_hudson'])
+    base['is_plevin'] = int(needs_legacy and legacy_best is not None and legacy_best['is_plevin'])
+    base['is_p_slab'] = int(needs_p_slab and p_slab_best is not None and p_slab_best['is_p_slab'])
+
+    if p_slab_best is not None:
+        base['h_proj_dist'] = p_slab_best['h_proj_dist']
+        base['H_ray_t'] = p_slab_best['H_ray_t']
+
+    if legacy_best is not None:
+        base['theta'] = legacy_best['theta']
+        base['angle_XPCN'] = legacy_best['angle_XPCN']
+        base['angle_XH_Pi'] = legacy_best['angle_XH_Pi']
+
+    return base
+
 
 def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
                 x_cra, x_atom, h_name: str, dist: float,
-                x_pos: np.ndarray, proj: float, h_proj_dist: float, h_ray_t: float,
+                dist_x_centroid: float, x_pos: np.ndarray, proj: Optional[float],
+                metrics: Dict[str, Any],
                 is_cone: bool = False,
                 combined_occ: float = 1.0, sym_op: int = 0,
                 h_atom: Optional[gemmi.Atom] = None):
@@ -624,7 +718,11 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
         'X_atom': x_atom.name,
         'H_atom': h_name,
         'dist_X_Pi': _round_float(dist, 3),
+        'dist_X_centroid': _round_float(dist_x_centroid, 3),
         'H_source': h_source,
+        'is_hudson': metrics['is_hudson'],
+        'is_plevin': metrics['is_plevin'],
+        'is_p_slab': metrics['is_p_slab'],
         'is_trp_5ring_acceptor': is_trp_5ring,
         'is_pi_pi_tshaped': is_pi_pi_tshaped,
         'pi_ss_type': pi_ss_type,
@@ -642,9 +740,12 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
         'seq_sep': seq_sep,
         'P_radius': _round_float(rctx.p_radius, 3),
         'P_slab_half_thickness': _round_float(rctx.p_slab_half_thickness, 3),
-        'proj_dist': _round_float(proj, 3),
-        'h_proj_dist': _round_float(h_proj_dist, 3),
-        'H_ray_t': _round_float(h_ray_t, 3),
+        'proj_dist': _round_float(proj, 3) if proj is not None else None,
+        'theta': _round_float(metrics['theta'], 2) if metrics['theta'] is not None else None,
+        'angle_XPCN': _round_float(metrics['angle_XPCN'], 2) if metrics['angle_XPCN'] is not None else None,
+        'angle_XH_Pi': _round_float(metrics['angle_XH_Pi'], 2) if metrics['angle_XH_Pi'] is not None else None,
+        'h_proj_dist': _round_float(metrics['h_proj_dist'], 3) if metrics['h_proj_dist'] is not None else None,
+        'H_ray_t': _round_float(metrics['H_ray_t'], 3) if metrics['H_ray_t'] is not None else None,
         'sym_op': sym_op,
         '_combined_occ': float(combined_occ),
         '_pi_ring_key': rctx.mode,

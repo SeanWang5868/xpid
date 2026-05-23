@@ -16,9 +16,25 @@ SIMPLE_COLS = [
     'pdb', 'resolution',
     'pi_chain', 'pi_res', 'pi_id',
     'X_chain', 'X_res', 'X_id', 'X_atom', 'H_atom',
-    'H_source', 'dist_X_Pi',
+    'H_source',
+    'is_hudson', 'is_plevin', 'is_p_slab',
+    'dist_X_centroid', 'dist_X_Pi',
+    'proj_dist', 'theta', 'angle_XPCN', 'angle_XH_Pi',
+    'P_radius', 'P_slab_half_thickness', 'h_proj_dist', 'H_ray_t',
     'is_trp_5ring_acceptor', 'is_pi_pi_tshaped', 'sym_op'
 ]
+
+FLOAT_COLS = {
+    'resolution', 'dist_X_centroid', 'dist_X_Pi', 'proj_dist', 'theta',
+    'angle_XPCN', 'angle_XH_Pi', 'P_radius', 'P_slab_half_thickness',
+    'h_proj_dist', 'H_ray_t', 'pi_avg_b', 'pi_center_x', 'pi_center_y',
+    'pi_center_z', 'X_b', 'X_xyz_x', 'X_xyz_y', 'X_xyz_z',
+}
+
+INT_COLS = {
+    'is_hudson', 'is_plevin', 'is_p_slab', 'is_trp_5ring_acceptor',
+    'is_pi_pi_tshaped', 'seq_sep', 'sym_op',
+}
 
 
 class ResultStreamer:
@@ -95,9 +111,21 @@ class ResultStreamer:
 
         elif self.file_type == 'parquet':
 
-            df = self.pd.DataFrame(results)
-            table = self.pa.Table.from_pandas(df if self.verbose else df[SIMPLE_COLS])
+            df = self._dataframe_for_parquet(results)
+            table = self.pa.Table.from_pandas(df, preserve_index=False)
             if self.is_first_chunk:
                 self.parquet_writer = self.pq.ParquetWriter(self.output_path, table.schema)
                 self.is_first_chunk = False
             self.parquet_writer.write_table(table)
+
+    def _dataframe_for_parquet(self, results: List[Dict[str, Any]]):
+        df = self.pd.DataFrame(results)
+        if not self.verbose:
+            df = df[SIMPLE_COLS]
+
+        for col in FLOAT_COLS.intersection(df.columns):
+            df[col] = self.pd.to_numeric(df[col], errors='coerce')
+        for col in INT_COLS.intersection(df.columns):
+            df[col] = self.pd.to_numeric(df[col], errors='coerce').astype('Int64')
+
+        return df

@@ -1,6 +1,6 @@
 """
 geometry.py
-Geometric calculations for the P-model and cone alignment.
+Geometric calculations for Hudson, Plevin, P-slab, and cone alignment.
 """
 import numpy as np
 import gemmi
@@ -72,6 +72,52 @@ def calculate_p_offset(point_on_plane: np.ndarray, p_center: np.ndarray) -> floa
 def point_is_in_p_region(point_on_plane: np.ndarray, p_center: np.ndarray, p_radius: float) -> bool:
     """Return True when a projected point lies inside the finite P region."""
     return calculate_p_offset(point_on_plane, p_center) <= p_radius
+
+
+def calculate_xpcn_angle(x_pos: np.ndarray, pi_center: np.ndarray, pi_normal: np.ndarray) -> Optional[float]:
+    """Legacy Plevin angle between X->centroid and the ring normal."""
+    v_x_pi = pi_center - x_pos
+    norm_v = np.linalg.norm(v_x_pi)
+    norm_n = np.linalg.norm(pi_normal)
+    if norm_v == 0 or norm_n == 0:
+        return None
+
+    cos_theta = np.clip(np.dot(v_x_pi, pi_normal) / (norm_v * norm_n), -1.0, 1.0)
+    angle = np.degrees(np.arccos(cos_theta))
+    return 180 - angle if angle > 90 else angle
+
+
+def calculate_xh_picenter_angle(pi_center: np.ndarray, x_pos: np.ndarray, h_pos: np.ndarray) -> Optional[float]:
+    """Legacy Plevin X-H-centroid angle."""
+    v_hx = x_pos - h_pos
+    v_hc = pi_center - h_pos
+    norm_hx = np.linalg.norm(v_hx)
+    norm_hc = np.linalg.norm(v_hc)
+    if norm_hx == 0 or norm_hc == 0:
+        return None
+
+    cos_theta = np.clip(np.dot(v_hx, v_hc) / (norm_hx * norm_hc), -1.0, 1.0)
+    return np.degrees(np.arccos(cos_theta))
+
+
+def calculate_hudson_theta(pi_center: np.ndarray, x_pos: np.ndarray, h_pos: np.ndarray, normal: np.ndarray) -> Optional[float]:
+    """Legacy Hudson angle between X-H and the ring normal.
+
+    Returns None if the X-H vector points away from the ring centroid.
+    """
+    v_x_pi = pi_center - x_pos
+    v_xh = h_pos - x_pos
+    if np.dot(v_xh, v_x_pi) <= 0:
+        return None
+
+    norm_n = np.linalg.norm(normal)
+    norm_xh = np.linalg.norm(v_xh)
+    if norm_n == 0 or norm_xh == 0:
+        return None
+
+    cos_angle = np.clip(np.dot(normal, v_xh) / (norm_n * norm_xh), -1.0, 1.0)
+    angle = np.degrees(np.arccos(cos_angle))
+    return 180 - angle if angle >= 90 else angle
 
 
 def calculate_xh_ray_p_slab_entry(

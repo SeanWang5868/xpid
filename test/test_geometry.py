@@ -20,6 +20,20 @@ def test_p_plane_distance_and_projection():
     assert np.isclose(geometry.calculate_p_offset(projected, p_center), np.sqrt(2.5))
 
 
+def test_legacy_hudson_plevin_angles_are_directional():
+    p_center = np.array([0., 0., 0.])
+    normal = np.array([0., 0., 1.])
+    x_pos = np.array([0., 0., 3.])
+    h_pos = np.array([0., 0., 2.])
+
+    assert np.isclose(geometry.calculate_xpcn_angle(x_pos, p_center, normal), 0.0)
+    assert np.isclose(geometry.calculate_xh_picenter_angle(p_center, x_pos, h_pos), 180.0)
+    assert np.isclose(geometry.calculate_hudson_theta(p_center, x_pos, h_pos, normal), 0.0)
+
+    h_away = np.array([0., 0., 4.])
+    assert geometry.calculate_hudson_theta(p_center, x_pos, h_away, normal) is None
+
+
 def test_xh_ray_p_slab_entry_uses_near_surface():
     p_center = np.array([0., 0., 0.])
     normal = np.array([0., 0., 1.])
