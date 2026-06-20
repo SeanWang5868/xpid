@@ -39,11 +39,20 @@ CANDIDATE_SIMPLE_COLS = [
     'xh_centroid_cos', 'xh_lateral_inward_score',
 ]
 
+COORDINATE_SIMPLE_COLS = [
+    'pi_center_x', 'pi_center_y', 'pi_center_z',
+    'pi_normal_x', 'pi_normal_y', 'pi_normal_z',
+    'X_xyz_x', 'X_xyz_y', 'X_xyz_z',
+    'H_xyz_x', 'H_xyz_y', 'H_xyz_z',
+    'X_side_of_pi',
+]
+
 SIMPLE_COLS = BASE_SIMPLE_COLS
 P_SLAB_LABEL_KEYS = {'is_p_slab'}
 P_GEOMETRY_OUTPUT_KEYS = set(P_GEOMETRY_SIMPLE_COLS)
 P_SLAB_OUTPUT_KEYS = set(P_SLAB_SIMPLE_COLS)
 CANDIDATE_OUTPUT_KEYS = set(CANDIDATE_SIMPLE_COLS)
+COORDINATE_OUTPUT_KEYS = set(COORDINATE_SIMPLE_COLS)
 
 FLOAT_COLS = {
     'resolution', 'dist_X_centroid', 'dist_X_Pi', 'proj_dist', 'theta',
@@ -52,7 +61,9 @@ FLOAT_COLS = {
     'H_plane_t', 'H_plane_entry_dist', 'delta_h_proj_dist',
     'xh_centroid_cos', 'xh_lateral_inward_score',
     'pi_avg_b', 'pi_center_x', 'pi_center_y', 'pi_center_z',
+    'pi_normal_x', 'pi_normal_y', 'pi_normal_z',
     'X_b', 'X_xyz_x', 'X_xyz_y', 'X_xyz_z',
+    'H_xyz_x', 'H_xyz_y', 'H_xyz_z',
 }
 
 INT_COLS = {
@@ -60,7 +71,7 @@ INT_COLS = {
     'is_pi_pi_tshaped', 'seq_sep', 'sym_op', 'is_xh_candidate',
     'is_hudson_spatial', 'is_plevin_spatial', 'hudson_dist_ok',
     'hudson_proj_ok', 'hudson_direction_ok', 'plevin_dist_ok',
-    'plevin_xpcn_ok', 'plevin_direction_ok',
+    'plevin_xpcn_ok', 'plevin_direction_ok', 'X_side_of_pi',
 }
 
 
@@ -73,12 +84,14 @@ class ResultStreamer:
 
     def __init__(self, output_path: Path, file_type: str, verbose: bool,
                  include_p_slab: bool = False,
-                 include_xh_candidates: bool = False):
+                 include_xh_candidates: bool = False,
+                 include_coordinates: bool = False):
         self.output_path = output_path
         self.file_type = file_type.lower()
         self.verbose = verbose
         self.include_p_slab = include_p_slab
         self.include_xh_candidates = include_xh_candidates
+        self.include_coordinates = include_coordinates
         self.file_handle = None
         self.csv_writer = None
         self.parquet_writer = None
@@ -161,6 +174,11 @@ class ResultStreamer:
         return df
 
     def _simple_cols(self) -> List[str]:
+        def with_coordinates(cols: List[str]) -> List[str]:
+            if not self.include_coordinates:
+                return cols
+            return cols + [col for col in COORDINATE_SIMPLE_COLS if col not in cols]
+
         if self.include_xh_candidates:
             cols = (
                 BASE_SIMPLE_COLS[:11] +
@@ -170,10 +188,11 @@ class ResultStreamer:
                 CANDIDATE_SIMPLE_COLS[1:] +
                 P_GEOMETRY_SIMPLE_COLS
             )
-            return cols
+            return with_coordinates(cols)
         if self.include_p_slab:
-            return BASE_SIMPLE_COLS[:11] + P_SLAB_SIMPLE_COLS[:1] + BASE_SIMPLE_COLS[11:] + P_SLAB_SIMPLE_COLS[1:]
-        return BASE_SIMPLE_COLS
+            cols = BASE_SIMPLE_COLS[:11] + P_SLAB_SIMPLE_COLS[:1] + BASE_SIMPLE_COLS[11:] + P_SLAB_SIMPLE_COLS[1:]
+            return with_coordinates(cols)
+        return with_coordinates(BASE_SIMPLE_COLS)
 
     def _headers(self, first_result: Dict[str, Any]):
         if not self.verbose:

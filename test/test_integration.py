@@ -105,9 +105,11 @@ def test_api_and_core_default_disable_cone_and_p_slab():
     assert api_sig.parameters["use_cone"].default is False
     assert api_sig.parameters["include_p_slab"].default is False
     assert api_sig.parameters["report_xh_candidates"].default is False
+    assert api_sig.parameters["include_coordinates"].default is False
     assert core_sig.parameters["use_cone"].default is False
     assert core_sig.parameters["include_p_slab"].default is False
     assert core_sig.parameters["report_xh_candidates"].default is False
+    assert core_sig.parameters["include_coordinates"].default is False
 
 
 def test_cli_parser_default_disables_cone_and_p_slab():
@@ -117,6 +119,7 @@ def test_cli_parser_default_disables_cone_and_p_slab():
     assert args.use_cone is False
     assert args.include_p_slab is False
     assert args.report_xh_candidates is False
+    assert args.include_coordinates is False
 
 
 def test_read_structure_falls_back_to_rcsb_for_corrupt_named_gzip(tmp_path, monkeypatch):
@@ -454,6 +457,28 @@ def test_legacy_hudson_hit_is_retained_when_p_slab_fails():
     assert hits[0]["is_plevin"] == 0
 
 
+def test_coordinate_output_includes_h_xyz_pi_normal_and_x_side():
+    hits = core.detect_interactions_in_structure(
+        _structure_with_phe_and_og(), "test", use_cone=False,
+        include_coordinates=True)
+
+    assert len(hits) == 1
+    hit = hits[0]
+    assert hit["pi_center_x"] == 0.0
+    assert hit["pi_center_y"] == 0.0
+    assert hit["pi_center_z"] == 0.0
+    assert hit["X_xyz_x"] == 0.0
+    assert hit["X_xyz_y"] == 0.0
+    assert hit["X_xyz_z"] == 3.0
+    assert hit["H_xyz_x"] == 0.0
+    assert hit["H_xyz_y"] == 0.0
+    assert hit["H_xyz_z"] == 2.0
+    assert hit["pi_normal_x"] == 0.0
+    assert hit["pi_normal_y"] == 0.0
+    assert hit["pi_normal_z"] == 1.0
+    assert hit["X_side_of_pi"] == 1
+
+
 def test_hydrogen_merge_preserves_residues_with_experimental_h(monkeypatch):
     st = gemmi.Structure()
     st.cell = gemmi.UnitCell(30, 30, 30, 90, 90, 90)
@@ -555,6 +580,9 @@ def test_default_csv_output_hides_p_slab_columns(tmp_path):
         "proj_dist": 0.0, "theta": 0.0, "angle_XPCN": 0.0,
         "angle_XH_Pi": 180.0, "P_radius": 2.0,
         "P_slab_half_thickness": 0.5, "h_proj_dist": 0.0, "H_ray_t": 2.5,
+        "H_xyz_x": 0.0, "H_xyz_y": 0.0, "H_xyz_z": 2.0,
+        "pi_normal_x": 0.0, "pi_normal_y": 0.0, "pi_normal_z": 1.0,
+        "X_side_of_pi": 1,
         "is_trp_5ring_acceptor": 0, "is_pi_pi_tshaped": 0, "sym_op": 0,
     }]
 
@@ -570,6 +598,45 @@ def test_default_csv_output_hides_p_slab_columns(tmp_path):
     assert "is_p_slab" not in header
     assert "h_proj_dist" not in header
     assert "H_ray_t" not in header
+    assert "H_xyz_x" not in header
+    assert "pi_normal_z" not in header
+    assert "X_side_of_pi" not in header
+
+
+def test_csv_output_can_include_coordinate_columns(tmp_path):
+    rows = [{
+        "pdb": "test", "resolution": 1.5,
+        "pi_chain": "A", "pi_res": "PHE", "pi_id": "1",
+        "X_chain": "A", "X_res": "SER", "X_id": "2",
+        "X_atom": "OG", "H_atom": "HG", "H_source": "experimental",
+        "is_hudson": 1, "is_plevin": 1,
+        "dist_X_centroid": 3.0, "dist_X_Pi": 3.0,
+        "proj_dist": 0.0, "theta": 0.0, "angle_XPCN": 0.0,
+        "angle_XH_Pi": 180.0,
+        "pi_center_x": 0.0, "pi_center_y": 0.0, "pi_center_z": 0.0,
+        "pi_normal_x": 0.0, "pi_normal_y": 0.0, "pi_normal_z": 1.0,
+        "X_xyz_x": 0.0, "X_xyz_y": 0.0, "X_xyz_z": 3.0,
+        "H_xyz_x": 0.0, "H_xyz_y": 0.0, "H_xyz_z": 2.0,
+        "X_side_of_pi": 1,
+        "is_trp_5ring_acceptor": 0, "is_pi_pi_tshaped": 0, "sym_op": 0,
+    }]
+
+    out_path = tmp_path / "coords.csv"
+    with output.ResultStreamer(
+            out_path, "csv", verbose=False, include_coordinates=True) as streamer:
+        streamer.write_chunk(rows)
+
+    with out_path.open(newline="", encoding="utf-8") as handle:
+        header = next(csv.reader(handle))
+
+    for col in (
+        "pi_center_x", "pi_center_y", "pi_center_z",
+        "pi_normal_x", "pi_normal_y", "pi_normal_z",
+        "X_xyz_x", "X_xyz_y", "X_xyz_z",
+        "H_xyz_x", "H_xyz_y", "H_xyz_z",
+        "X_side_of_pi",
+    ):
+        assert col in header
 
 
 def test_csv_output_can_include_p_slab_columns(tmp_path):

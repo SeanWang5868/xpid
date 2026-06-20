@@ -59,6 +59,7 @@ class TaskPacket(NamedTuple):
     use_cone: bool
     include_p_slab: bool
     report_xh_candidates: bool
+    include_coordinates: bool
     allow_remote_recovery: bool
     min_occ: float
     sym_contacts: bool
@@ -148,6 +149,7 @@ def process_one_file(task: TaskPacket):
             use_cone=task.use_cone,
             include_p_slab=task.include_p_slab,
             report_xh_candidates=task.report_xh_candidates,
+            include_coordinates=task.include_coordinates,
             min_occ=task.min_occ,
             sym_contacts=task.sym_contacts,
             include_water=task.include_water,
@@ -162,7 +164,8 @@ def process_one_file(task: TaskPacket):
             with ResultStreamer(
                 out_path, task.ftype_arg, task.verbose,
                 include_p_slab=task.include_p_slab,
-                include_xh_candidates=task.report_xh_candidates) as streamer:
+                include_xh_candidates=task.report_xh_candidates,
+                include_coordinates=task.include_coordinates) as streamer:
                 streamer.write_chunk(results)
             return None, count, [], str(out_path), system_summary
         else:
@@ -195,6 +198,8 @@ def _build_parser() -> argparse.ArgumentParser:
                      choices=['json', 'csv', 'parquet'], help="Output format.")
     out.add_argument('-v', '--verbose', action='store_true',
                      help="Include detailed geometric columns.")
+    out.add_argument('--include-coordinates', action='store_true',
+                     help="Include absolute pi-center, X, H coordinates, pi normal, and X-side columns.")
     out.add_argument('--log', action='store_true', help="Save run log to file.")
 
     proc = parser.add_argument_group("Processing Options")
@@ -304,6 +309,7 @@ def main():
         logger.warning("[WARN] --cone is ignored in --xh-candidates mode to avoid virtual-H directionality bias.")
     p_slab_status = "Included" if args.include_p_slab else "Excluded (default)"
     candidate_status = "Enabled" if args.report_xh_candidates else "Disabled (default)"
+    coordinate_status = "Included" if args.include_coordinates else "Excluded (default)"
     sym_status = "Enabled" if args.sym_contacts else "Disabled"
     water_status = "Included" if args.include_water else "Excluded (default)"
     max_b_status = f"{args.max_b:.1f} \u00c5\u00b2" if args.max_b > 0 else "No filter"
@@ -317,6 +323,7 @@ def main():
     logger.info(f"Cone Logic  : {cone_status}")
     logger.info(f"P-slab      : {p_slab_status}")
     logger.info(f"X-H Export  : {candidate_status}")
+    logger.info(f"Coordinates : {coordinate_status}")
     logger.info(f"Sym Contacts: {sym_status}")
     logger.info(f"Water       : {water_status}")
     logger.info(f"Max B-factor: {max_b_status}")
@@ -331,7 +338,7 @@ def main():
         TaskPacket(f, ftype_arg, args.h_mode, str(output_dir),
                    args.separate, filters, args.verbose, args.model, effective_use_cone,
                    args.include_p_slab, args.report_xh_candidates,
-                   allow_remote_recovery, args.min_occ,
+                   args.include_coordinates, allow_remote_recovery, args.min_occ,
                    args.sym_contacts, args.include_water, args.max_b)
         for f in files
     ]
@@ -349,7 +356,8 @@ def main():
             streamer = ResultStreamer(
                 merge_file_path, ftype_arg, args.verbose,
                 include_p_slab=args.include_p_slab,
-                include_xh_candidates=args.report_xh_candidates)
+                include_xh_candidates=args.report_xh_candidates,
+                include_coordinates=args.include_coordinates)
             streamer.__enter__()
 
         with multiprocessing.Pool(args.jobs, maxtasksperchild=100) as pool:

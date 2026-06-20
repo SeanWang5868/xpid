@@ -139,6 +139,24 @@ def _ray_entry_distance(x_pos: np.ndarray, h_pos: np.ndarray, ray_t: Optional[fl
     return float(ray_t * np.linalg.norm(h_pos - x_pos))
 
 
+def _canonical_unit_normal(normal: np.ndarray) -> Optional[np.ndarray]:
+    norm = np.linalg.norm(normal)
+    if norm == 0:
+        return None
+    unit = normal / norm
+    pivot = int(np.argmax(np.abs(unit)))
+    if unit[pivot] < 0:
+        unit = -unit
+    return unit
+
+
+def _side_of_plane(point: np.ndarray, plane_point: np.ndarray, canonical_normal: np.ndarray) -> int:
+    signed = float(np.dot(point - plane_point, canonical_normal))
+    if abs(signed) < 1e-6:
+        return 0
+    return 1 if signed > 0 else -1
+
+
 def _calculate_direction_metrics(rctx: "_RingContext", x_pos: np.ndarray, h_pos: np.ndarray,
                                  proj_dist: Optional[float]) -> Dict[str, Any]:
     v_xh = h_pos - x_pos
@@ -341,6 +359,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                      use_cone: bool = False,
                                      include_p_slab: bool = False,
                                      report_xh_candidates: bool = False,
+                                     include_coordinates: bool = False,
                                      min_occ: float = 0.0,
                                      external_ss_index: Optional[Dict] = None,
                                      sym_contacts: bool = False,
@@ -399,7 +418,8 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                         results.extend(_detect_residue(
                             pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
                             pi_atoms, pi_alt, mode, filter_donor, filter_donor_atom, use_cone,
-                            include_p_slab, report_xh_candidates, ring_size, min_occ,
+                            include_p_slab, report_xh_candidates, include_coordinates,
+                            ring_size, min_occ,
                             sym_contacts=sym_contacts, max_b=max_b
                         ))
     return _deduplicate_hits(results, prefer_directional=not report_xh_candidates)
@@ -433,7 +453,8 @@ def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.Neighbor
 def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
                     pi_atoms: List[gemmi.Atom], pi_alt: str, mode: str, filter_donor: Optional[List[str]],
                     filter_donor_atom: Optional[List[str]], use_cone: bool,
-                    include_p_slab: bool, report_xh_candidates: bool, ring_size: int,
+                    include_p_slab: bool, report_xh_candidates: bool,
+                    include_coordinates: bool, ring_size: int,
                     min_occ: float, sym_contacts: bool = False, max_b: float = 0.0):
     hits = []
 
@@ -533,7 +554,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         found_systems, orig_h_positions = _run_explicit_track(
             rctx, x_cra, x_atom, x_mark, x_pos_arr, is_sym_mate,
             x_elem, dist_x_pi, dist_x_centroid, proj_dist, combined_occ,
-            sym_op, include_p_slab, report_xh_candidates, hits
+            sym_op, include_p_slab, report_xh_candidates, include_coordinates, hits
         )
 
         # --- Track 2: Cone rescue ---
@@ -551,7 +572,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
                 rctx, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
                 x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
                 combined_occ, orig_h_positions, sym_op, cone_needed_systems,
-                include_p_slab, hits
+                include_p_slab, include_coordinates, hits
             )
 
     return hits
@@ -561,7 +582,8 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
                         x_pos_arr, is_sym_mate,
                         x_elem, dist_x_pi, dist_x_centroid, proj_dist,
                         combined_occ, sym_op, include_p_slab: bool,
-                        report_xh_candidates: bool, hits) -> tuple:
+                        report_xh_candidates: bool, include_coordinates: bool,
+                        hits) -> tuple:
     """Track 1: Explicit hydrogen geometry. Returns (found_systems, orig_h_positions)."""
     found_systems: Set[str] = set()
     orig_h_positions = []
@@ -615,7 +637,9 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
                     dist_x_centroid, x_pos_arr, proj_dist, metrics,
                     is_cone=False, combined_occ=h_combined_occ, sym_op=sym_op,
                     h_atom=h_atom, include_p_slab=include_p_slab,
-                    include_candidate_metrics=report_xh_candidates)
+                    include_candidate_metrics=report_xh_candidates,
+                    include_coordinates=include_coordinates,
+                    h_pos=h_pos_arr)
     
     return found_systems, orig_h_positions
 
@@ -623,7 +647,7 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
 def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
                     x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
                     combined_occ, orig_h_positions, sym_op, needed_systems: Set[str],
-                    include_p_slab: bool, hits):
+                    include_p_slab: bool, include_coordinates: bool, hits):
     """Track 2: Cone rescue for rotatable groups."""
     if x_res_name not in config.ROTATABLE_MAPPING:
         return
@@ -725,8 +749,10 @@ def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name
     # single-system behavior used different scoring rules.
     legacy_best = None
     legacy_best_score = None
+    legacy_best_h_pos = None
     p_slab_best = None
     p_slab_best_score = None
+    p_slab_best_h_pos = None
     needs_legacy = bool(needed_systems & {"hudson", "plevin"})
     needs_p_slab = "p_slab" in needed_systems
     
@@ -739,6 +765,7 @@ def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name
             if legacy_best_score is None or legacy_score > legacy_best_score:
                 legacy_best_score = legacy_score
                 legacy_best = metrics
+                legacy_best_h_pos = h_pos_np
 
         if needs_p_slab and metrics['is_p_slab']:
             h_proj_score = metrics['h_proj_dist'] if metrics['h_proj_dist'] is not None else 999.0
@@ -747,13 +774,17 @@ def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name
             if p_slab_best_score is None or p_slab_score > p_slab_best_score:
                 p_slab_best_score = p_slab_score
                 p_slab_best = metrics
+                p_slab_best_h_pos = h_pos_np
 
     combined = _merge_cone_system_metrics(legacy_best, p_slab_best, needs_legacy, needs_p_slab)
     if combined is not None:
+        selected_h_pos = legacy_best_h_pos if legacy_best_h_pos is not None else p_slab_best_h_pos
         _record_hit(hits, rctx, x_cra, x_atom, "virt", dist_x_pi,
                     dist_x_centroid, x_pos_arr, proj_dist, combined,
                     is_cone=True, combined_occ=combined_occ, sym_op=sym_op,
-                    h_atom=None, include_p_slab=include_p_slab)
+                    h_atom=None, include_p_slab=include_p_slab,
+                    include_coordinates=include_coordinates,
+                    h_pos=selected_h_pos)
 
 
 def _merge_cone_system_metrics(legacy_best: Optional[Dict[str, Any]],
@@ -795,7 +826,9 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
                 combined_occ: float = 1.0, sym_op: int = 0,
                 h_atom: Optional[gemmi.Atom] = None,
                 include_p_slab: bool = False,
-                include_candidate_metrics: bool = False):
+                include_candidate_metrics: bool = False,
+                include_coordinates: bool = False,
+                h_pos: Optional[np.ndarray] = None):
     
     if combined_occ < rctx.min_occ:
         return
@@ -880,6 +913,18 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
             'plevin_direction_ok': metrics['plevin_direction_ok'],
             'xh_centroid_cos': _round_float(metrics['xh_centroid_cos'], 4) if metrics['xh_centroid_cos'] is not None else None,
             'xh_lateral_inward_score': _round_float(metrics['xh_lateral_inward_score'], 4) if metrics['xh_lateral_inward_score'] is not None else None,
+        })
+
+    if include_coordinates:
+        canonical_normal = _canonical_unit_normal(rctx.pi_normal)
+        hit.update({
+            'H_xyz_x': _round_float(h_pos[0], 3) if h_pos is not None else None,
+            'H_xyz_y': _round_float(h_pos[1], 3) if h_pos is not None else None,
+            'H_xyz_z': _round_float(h_pos[2], 3) if h_pos is not None else None,
+            'pi_normal_x': _round_float(canonical_normal[0], 6) if canonical_normal is not None else None,
+            'pi_normal_y': _round_float(canonical_normal[1], 6) if canonical_normal is not None else None,
+            'pi_normal_z': _round_float(canonical_normal[2], 6) if canonical_normal is not None else None,
+            'X_side_of_pi': _side_of_plane(x_pos, rctx.pi_center_arr, canonical_normal) if canonical_normal is not None else 0,
         })
 
     if include_p_slab or include_candidate_metrics:
