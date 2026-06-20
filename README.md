@@ -115,6 +115,7 @@ a zero-thickness disk.
 | `--separate` | Write separate output files per structure. |
 | `--file-type` | `json`, `csv`, or `parquet`. Default: `json`. |
 | `-v`, `--verbose` | Include detailed geometric columns. |
+| `--include-coordinates` | Include absolute π-center, X, H coordinates, canonical π normal, and `X_side_of_pi`. |
 | `--log` | Save a run log. |
 
 ### Processing
@@ -156,6 +157,13 @@ such as `is_xh_candidate`, `is_hudson_spatial`, `is_plevin_spatial`,
 `xh_lateral_inward_score`, `h_proj_dist`, `H_ray_t`, `h_plane_proj_dist`, and
 `H_plane_t`. Unless `--include-p-slab` is also used, candidate output does not
 include an `is_p_slab` label.
+
+With `--include-coordinates`, simple mode additionally includes
+`pi_center_x/y/z`, `pi_normal_x/y/z`, `X_xyz_x/y/z`, `H_xyz_x/y/z`, and
+`X_side_of_pi`. The π normal is canonicalized so that its largest absolute
+component is positive; `X_side_of_pi` is `1` when X lies on the positive side of
+that normal, `-1` on the negative side, and `0` when X is effectively in the
+π plane.
 
 Verbose mode adds secondary-structure annotations, P center and X coordinates,
 sequence separation, and B-factors.
