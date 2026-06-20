@@ -63,8 +63,17 @@ Output column names currently remain ASCII for compatibility with existing scrip
 
 ## Geometric Criteria
 
-Xpid reports three geometric systems side by side: Hudson, Plevin, and the
-finite P-slab model. A row is reported when at least one system is positive.
+By default, Xpid reports the Hudson/Plevin result set. A row is reported when
+Hudson or Plevin is positive. The finite P-slab system is still available for
+method-development comparisons, but it is opt-in rather than part of the
+default output.
+
+For directionality-background analysis, Xpid can also export X-H candidate rows
+with `--xh-candidates`. In this mode, Xpid first applies only the Hudson/Plevin
+X-position criteria around each π ring, then records every bonded X-H vector and
+assigns the Hudson/Plevin labels post hoc. This mode is intended for downstream
+annotation and null/background comparisons; it is not a new positive XH–π
+definition.
 
 Definitions: X = donor heavy atom, H = hydrogen, Xp = orthogonal projection of X
 onto the aromatic plane, Hp = entry point where the X->H ray first intersects
@@ -74,11 +83,12 @@ the finite P slab, and P = finite aromatic π slab.
 | :--- | :--- | :--- |
 | Hudson | `dist_X_centroid`, `proj_dist`, `theta` | d(X, centroid) ≤ element cutoff; Xp inside P radius; `theta` ≤ 40° |
 | Plevin | `dist_X_centroid`, `angle_XPCN`, `angle_XH_Pi` | d(X, centroid) < element cutoff; `angle_XPCN` < 25°; `angle_XH_Pi` ≥ 120° |
-| P-slab | `dist_X_Pi`, `proj_dist`, `h_proj_dist`, `H_ray_t` | d(X, P plane) ≤ element cutoff; Xp inside P radius; X->H ray enters the finite P slab inside P |
+| P-slab optional | `dist_X_Pi`, `proj_dist`, `h_proj_dist`, `H_ray_t` | Enable with `--include-p-slab`; d(X, P plane) ≤ element cutoff; Xp inside P radius; X->H ray enters the finite P slab inside P |
 
 Element cutoffs are ≤ 4.3 Å for N/O, ≤ 4.5 Å for C, and ≤ 4.8 Å for S.
-P radius is 1.6 Å for 5-membered rings and 2.0 Å for 6-membered rings. The
-P-slab half-thickness is 0.5 Å above and below the aromatic plane.
+P radius is 1.6 Å for 5-membered rings and 2.0 Å for 6-membered rings. When
+the optional P-slab system is enabled, the P-slab half-thickness is 0.5 Å above
+and below the aromatic plane.
 
 The X->H ray is directional: H must lie between X and the finite P slab. This
 prevents an infinite X-H line from being counted when the hydrogen points away
@@ -114,8 +124,10 @@ a zero-thickness disk.
 | `--jobs N` | Number of worker processes. Default: 1. |
 | `--h-mode N` | Gemmi hydrogen mode: 0=NoChange, 1=Shift, 2=Remove, 3=ReAdd, 4=ReAddButWater, 5=ReAddKnown. |
 | `--model ID` | Model index to analyze, or `all`. |
-| `--cone` | Enable implicit cone rescue for rotatable groups. This is the default. |
-| `--no-cone` | Disable implicit cone rescue and use explicit hydrogens only. |
+| `--cone` | Enable implicit cone rescue for rotatable groups. |
+| `--no-cone` | Disable implicit cone rescue and use explicit hydrogens only. This is the default. |
+| `--include-p-slab`, `--p-slab` | Include the optional P-slab system, P-slab output columns, and P-slab summary counts. |
+| `--xh-candidates` | Export all explicit X-H bonds passing Hudson/Plevin X-position filters, including direction-failed candidates. Cone virtual H is ignored in this mode. |
 | `--sym-contacts` | Detect contacts across crystallographic symmetry mates. |
 | `--include-water` | Include water molecules as potential donors. |
 | `--max-b N` | Exclude contacts when any π-ring atom or X atom has B-factor above `N`. `0` disables this filter. |
@@ -132,18 +144,32 @@ a zero-thickness disk.
 ## Output Data
 
 Simple mode includes structure ID, resolution, donor/π-acceptor residue IDs, X
-atom, H atom, H source, the `is_hudson`, `is_plevin`, and `is_p_slab` labels,
-the main Hudson/Plevin/P-slab geometry columns, TRP 5-ring flag, T-shaped π-π
-flag, and symmetry operation index.
+atom, H atom, H source, the `is_hudson` and `is_plevin` labels, the main
+Hudson/Plevin geometry columns, TRP 5-ring flag, T-shaped π-π flag, and
+symmetry operation index. With `--include-p-slab`, simple mode also includes
+`is_p_slab`, `P_radius`, `P_slab_half_thickness`, `h_proj_dist`, `H_ray_t`,
+and related ray-entry geometry.
+
+With `--xh-candidates`, simple mode additionally includes diagnostic columns
+such as `is_xh_candidate`, `is_hudson_spatial`, `is_plevin_spatial`,
+`hudson_direction_ok`, `plevin_direction_ok`, `xh_centroid_cos`,
+`xh_lateral_inward_score`, `h_proj_dist`, `H_ray_t`, `h_plane_proj_dist`, and
+`H_plane_t`. Unless `--include-p-slab` is also used, candidate output does not
+include an `is_p_slab` label.
 
 Verbose mode adds secondary-structure annotations, P center and X coordinates,
 sequence separation, and B-factors.
 
-Every reported row satisfies at least one of the three systems. The label
-columns are integer 1/0 flags and can be used for downstream filtering.
-The command-line summary also prints Hudson-positive, Plevin-positive,
-P-slab-positive, Hudson/Plevin union, Hudson+Plevin overlap, and all-three
-overlap counts.
+Every default reported row satisfies Hudson or Plevin. The label columns are
+integer 1/0 flags and can be used for downstream filtering. The command-line
+summary prints Hudson-positive, Plevin-positive, Hudson/Plevin union, and
+Hudson+Plevin overlap counts. With `--include-p-slab`, it additionally prints
+P-slab-positive and all-three overlap counts.
+
+In `--xh-candidates` mode, the total row count is the number of exported X-H
+background candidates. `is_hudson` and `is_plevin` remain strict positive labels;
+rows with both labels set to 0 are spatially nearby X-H vectors that failed the
+directional filters.
 
 ## Notes
 

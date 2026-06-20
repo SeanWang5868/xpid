@@ -1,10 +1,10 @@
-import gemmi
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 
 from . import prep
 from . import core
+from . import structure_io
 
 logger = logging.getLogger("xpid")
 
@@ -15,7 +15,9 @@ def detect(
     filter_donor: Optional[List[str]] = None,
     filter_donor_atom: Optional[List[str]] = None,
     model_mode: Union[str, int] = 0,
-    use_cone: bool = True,
+    use_cone: bool = False,
+    include_p_slab: bool = False,
+    report_xh_candidates: bool = False,
     min_occ: float = 0.0,
     sym_contacts: bool = False,
     include_water: bool = False,
@@ -32,7 +34,7 @@ def detect(
          pdb_name = path_obj.stem
 
     try:
-        structure = gemmi.read_structure(str(path_obj))
+        structure = structure_io.read_structure(path_obj)
         structure = prep.add_hydrogens_memory(structure, h_change_val=h_mode)
         
         if not structure:
@@ -46,6 +48,8 @@ def detect(
             filter_donor_atom=filter_donor_atom,
             model_mode=model_mode,
             use_cone=use_cone,
+            include_p_slab=include_p_slab,
+            report_xh_candidates=report_xh_candidates,
             min_occ=min_occ,
             sym_contacts=sym_contacts,
             include_water=include_water,

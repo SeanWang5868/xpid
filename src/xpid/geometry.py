@@ -157,6 +157,33 @@ def calculate_xh_ray_p_slab_entry(
 
     return x_pos + t * direction, float(t)
 
+
+def calculate_xh_ray_plane_entry(
+    x_pos: np.ndarray,
+    h_pos: np.ndarray,
+    plane_point: np.ndarray,
+    normal: np.ndarray,
+    min_t: float = 1.0,
+) -> Optional[Tuple[np.ndarray, float]]:
+    """Intersect the directional X->H ray with the zero-thickness P plane."""
+    norm_n = np.linalg.norm(normal)
+    if norm_n == 0:
+        return None
+
+    unit_normal = normal / norm_n
+    z_x = float(np.dot(x_pos - plane_point, unit_normal))
+    direction = h_pos - x_pos
+    z_dir = float(np.dot(direction, unit_normal))
+    if abs(z_dir) < EPSILON:
+        return None
+
+    t = -z_x / z_dir
+    if t <= min_t:
+        return None
+
+    return x_pos + t * direction, float(t)
+
+
 def calculate_projection_dist(normal: np.ndarray, pi_center: np.ndarray, x_pos: np.ndarray) -> Optional[float]:
     projection_point = project_point_to_plane(x_pos, pi_center, normal)
     if projection_point is None:

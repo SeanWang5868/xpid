@@ -1,5 +1,9 @@
+import csv
+import inspect
+from pathlib import Path
+
 import gemmi
-from xpid import cli, core, config, prep
+from xpid import cli, core, config, detect, output, prep
 
 
 def _atom(name, element, xyz, b_iso=10.0, occ=1.0, altloc="\0"):
@@ -94,6 +98,114 @@ def test_donor_atom_filter_accepts_element_symbols():
     assert nitrogen_hits == []
 
 
+def test_api_and_core_default_disable_cone_and_p_slab():
+    api_sig = inspect.signature(detect)
+    core_sig = inspect.signature(core.detect_interactions_in_structure)
+
+    assert api_sig.parameters["use_cone"].default is False
+    assert api_sig.parameters["include_p_slab"].default is False
+    assert api_sig.parameters["report_xh_candidates"].default is False
+    assert core_sig.parameters["use_cone"].default is False
+    assert core_sig.parameters["include_p_slab"].default is False
+    assert core_sig.parameters["report_xh_candidates"].default is False
+
+
+def test_cli_parser_default_disables_cone_and_p_slab():
+    parser = cli._build_parser()
+    args = parser.parse_args(["dummy.cif"])
+
+    assert args.use_cone is False
+    assert args.include_p_slab is False
+    assert args.report_xh_candidates is False
+
+
+def test_read_structure_falls_back_to_rcsb_for_corrupt_named_gzip(tmp_path, monkeypatch):
+    from xpid import structure_io
+
+    bad_local = tmp_path / "5abc.cif.gz"
+    bad_local.write_bytes(b"truncated gzip")
+    downloaded = tmp_path / "downloaded" / "5abc.cif.gz"
+    sentinel = object()
+
+    def fake_read_structure(path):
+        path = Path(path)
+        if path == bad_local:
+            raise RuntimeError(
+                f"Cannot determine uncompressed size of {path}\n"
+                "Would it be 12312 -> 1263743296 bytes?"
+            )
+        if path == downloaded:
+            return sentinel
+        raise AssertionError(f"unexpected structure path: {path}")
+
+    def fake_download(pdb_code):
+        assert pdb_code == "5abc"
+        downloaded.parent.mkdir()
+        downloaded.write_bytes(b"valid replacement")
+        return downloaded
+
+    monkeypatch.setattr(structure_io.gemmi, "read_structure", fake_read_structure)
+    monkeypatch.setattr(structure_io, "download_rcsb_mmcif", fake_download)
+
+    assert structure_io.read_structure(bad_local) is sentinel
+
+
+def test_read_structure_does_not_fallback_when_recovery_disabled(tmp_path, monkeypatch):
+    from xpid import structure_io
+
+    bad_local = tmp_path / "5abc.cif.gz"
+    bad_local.write_bytes(b"truncated gzip")
+
+    def fake_read_structure(path):
+        raise RuntimeError(
+            f"Cannot determine uncompressed size of {path}\n"
+            "Would it be 12312 -> 1263743296 bytes?"
+        )
+
+    def fail_download(pdb_code):
+        raise AssertionError("download should not be attempted")
+
+    monkeypatch.setattr(structure_io.gemmi, "read_structure", fake_read_structure)
+    monkeypatch.setattr(structure_io, "download_rcsb_mmcif", fail_download)
+
+    try:
+        structure_io.read_structure(bad_local, allow_remote_recovery=False)
+    except RuntimeError as exc:
+        assert "appears corrupted" in str(exc)
+        assert "disabled for batch inputs" in str(exc)
+    else:
+        raise AssertionError("expected corrupt gzip error")
+
+
+def test_cli_enables_remote_recovery_only_for_single_direct_file(tmp_path):
+    single = tmp_path / "5abc.cif.gz"
+    single.write_bytes(b"")
+    other = tmp_path / "6def.cif.gz"
+    other.write_bytes(b"")
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    nested = folder / "7ghi.cif.gz"
+    nested.write_bytes(b"")
+    pdb_list = tmp_path / "ids.txt"
+    pdb_list.write_text("5abc\n", encoding="utf-8")
+
+    parser = cli._build_parser()
+
+    single_args = parser.parse_args([str(single)])
+    assert cli._allow_remote_recovery(single_args, [single]) is True
+
+    multi_args = parser.parse_args([str(single), str(other)])
+    assert cli._allow_remote_recovery(multi_args, [single, other]) is False
+
+    folder_args = parser.parse_args([str(folder)])
+    assert cli._allow_remote_recovery(folder_args, [nested]) is False
+
+    list_args = parser.parse_args([
+        "--pdb-list", str(pdb_list), "--pdb-mirror", str(tmp_path)
+    ])
+    assert cli._allow_remote_recovery(list_args, [single]) is False
+
+
 def test_cation_pi_donors_are_excluded_from_core_detection():
     st = _structure_with_phe_and_og(include_external_donor=False)
     chain = st[0][0]
@@ -158,7 +270,6 @@ def test_lower_occupancy_altloc_can_contribute_interaction():
     assert hits[0]["dist_X_Pi"] == 3.0
     assert hits[0]["is_hudson"] == 1
     assert hits[0]["is_plevin"] == 1
-    assert hits[0]["is_p_slab"] == 1
 
 
 def test_duplicate_altloc_hits_are_collapsed_to_best_occupancy():
@@ -189,7 +300,8 @@ def test_p_model_uses_plane_distance_not_centroid_distance():
     ser.add_atom(_atom("HG", "H", (1.9, 0.0, 3.0)))
     chain.add_residue(ser)
 
-    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+    hits = core.detect_interactions_in_structure(
+        st, "test", use_cone=False, include_p_slab=True)
 
     assert len(hits) == 1
     assert hits[0]["dist_X_Pi"] == 4.0
@@ -211,7 +323,8 @@ def test_p_model_rejects_h_ray_that_misses_p():
     ser.add_atom(_atom("HG", "H", (1.0, 0.0, 3.0)))
     chain.add_residue(ser)
 
-    assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+    assert core.detect_interactions_in_structure(
+        st, "test", use_cone=False, include_p_slab=True) == []
 
 
 def test_p_model_rejects_x_projection_outside_p():
@@ -224,7 +337,84 @@ def test_p_model_rejects_x_projection_outside_p():
     ser.add_atom(_atom("HG", "H", (2.1, 0.0, 2.0)))
     chain.add_residue(ser)
 
+    assert core.detect_interactions_in_structure(
+        st, "test", use_cone=False, include_p_slab=True) == []
+
+
+def test_p_model_is_disabled_by_default():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (1.9, 0.0, 4.0)))
+    ser.add_atom(_atom("HG", "H", (1.9, 0.0, 3.0)))
+    chain.add_residue(ser)
+
     assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+
+
+def test_xh_candidate_mode_reports_direction_failed_spatial_candidate():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.0)))
+    ser.add_atom(_atom("HG", "H", (0.0, 0.0, 4.0)))
+    chain.add_residue(ser)
+
+    assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+
+    hits = core.detect_interactions_in_structure(
+        st, "test", use_cone=False, report_xh_candidates=True)
+
+    assert len(hits) == 1
+    hit = hits[0]
+    assert hit["is_xh_candidate"] == 1
+    assert hit["is_hudson"] == 0
+    assert hit["is_plevin"] == 0
+    assert hit["is_hudson_spatial"] == 1
+    assert hit["is_plevin_spatial"] == 1
+    assert hit["hudson_direction_ok"] == 0
+    assert hit["plevin_direction_ok"] == 0
+    assert hit["xh_centroid_cos"] == -1.0
+    assert hit["P_radius"] == 2.0
+    assert hit["H_ray_t"] is None
+    assert hit["H_plane_t"] is None
+    assert "is_p_slab" not in hit
+
+
+def test_xh_candidate_mode_keeps_positive_labels_and_ray_geometry():
+    hits = core.detect_interactions_in_structure(
+        _structure_with_phe_and_og(), "test", use_cone=False, report_xh_candidates=True)
+
+    assert len(hits) == 1
+    hit = hits[0]
+    assert hit["is_hudson"] == 1
+    assert hit["is_plevin"] == 1
+    assert hit["hudson_direction_ok"] == 1
+    assert hit["plevin_direction_ok"] == 1
+    assert hit["h_proj_dist"] == 0.0
+    assert hit["H_ray_t"] == 2.5
+    assert hit["H_ray_entry_dist"] == 2.5
+    assert hit["h_plane_proj_dist"] == 0.0
+    assert hit["H_plane_t"] == 3.0
+    assert hit["H_plane_entry_dist"] == 3.0
+
+
+def test_xh_candidate_mode_ignores_cone_virtual_hydrogens():
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("CB", "C", (1.0, 0.0, 3.0)))
+    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.0)))
+    chain.add_residue(ser)
+
+    assert core.detect_interactions_in_structure(
+        st, "test", use_cone=True, report_xh_candidates=True) == []
 
 
 def test_p_slab_accepts_near_edge_directional_ray():
@@ -237,7 +427,8 @@ def test_p_slab_accepts_near_edge_directional_ray():
     ser.add_atom(_atom("HG", "H", (1.13, 0.0, 2.9775)))
     chain.add_residue(ser)
 
-    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+    hits = core.detect_interactions_in_structure(
+        st, "test", use_cone=False, include_p_slab=True)
 
     assert len(hits) == 1
     assert hits[0]["proj_dist"] == 0.83
@@ -261,9 +452,6 @@ def test_legacy_hudson_hit_is_retained_when_p_slab_fails():
     assert len(hits) == 1
     assert hits[0]["is_hudson"] == 1
     assert hits[0]["is_plevin"] == 0
-    assert hits[0]["is_p_slab"] == 0
-    assert hits[0]["h_proj_dist"] is not None
-    assert hits[0]["h_proj_dist"] > hits[0]["P_radius"]
 
 
 def test_hydrogen_merge_preserves_residues_with_experimental_h(monkeypatch):
@@ -322,7 +510,7 @@ def test_same_residue_donor_is_excluded():
     assert core.detect_interactions_in_structure(st, "test") == []
 
 
-def test_cli_system_summary_counts_union_and_overlaps():
+def test_cli_system_summary_defaults_to_hudson_plevin_only():
     rows = [
         {"is_hudson": 1, "is_plevin": 0, "is_p_slab": 0},
         {"is_hudson": 0, "is_plevin": 1, "is_p_slab": 1},
@@ -333,7 +521,115 @@ def test_cli_system_summary_counts_union_and_overlaps():
 
     assert summary["hudson"] == 2
     assert summary["plevin"] == 2
+    assert summary["hudson_plevin_union"] == 3
+    assert summary["hudson_plevin"] == 1
+    assert "p_slab" not in summary
+    assert "all_three" not in summary
+
+
+def test_cli_system_summary_can_include_p_slab():
+    rows = [
+        {"is_hudson": 1, "is_plevin": 0, "is_p_slab": 0},
+        {"is_hudson": 0, "is_plevin": 1, "is_p_slab": 1},
+        {"is_hudson": 1, "is_plevin": 1, "is_p_slab": 1},
+    ]
+
+    summary = cli.summarize_systems(rows, include_p_slab=True)
+
+    assert summary["hudson"] == 2
+    assert summary["plevin"] == 2
     assert summary["p_slab"] == 2
     assert summary["hudson_plevin_union"] == 3
     assert summary["hudson_plevin"] == 1
     assert summary["all_three"] == 1
+
+
+def test_default_csv_output_hides_p_slab_columns(tmp_path):
+    rows = [{
+        "pdb": "test", "resolution": 1.5,
+        "pi_chain": "A", "pi_res": "PHE", "pi_id": "1",
+        "X_chain": "A", "X_res": "SER", "X_id": "2",
+        "X_atom": "OG", "H_atom": "HG", "H_source": "experimental",
+        "is_hudson": 1, "is_plevin": 1, "is_p_slab": 1,
+        "dist_X_centroid": 3.0, "dist_X_Pi": 3.0,
+        "proj_dist": 0.0, "theta": 0.0, "angle_XPCN": 0.0,
+        "angle_XH_Pi": 180.0, "P_radius": 2.0,
+        "P_slab_half_thickness": 0.5, "h_proj_dist": 0.0, "H_ray_t": 2.5,
+        "is_trp_5ring_acceptor": 0, "is_pi_pi_tshaped": 0, "sym_op": 0,
+    }]
+
+    out_path = tmp_path / "hits.csv"
+    with output.ResultStreamer(out_path, "csv", verbose=False) as streamer:
+        streamer.write_chunk(rows)
+
+    with out_path.open(newline="", encoding="utf-8") as handle:
+        header = next(csv.reader(handle))
+
+    assert "is_hudson" in header
+    assert "is_plevin" in header
+    assert "is_p_slab" not in header
+    assert "h_proj_dist" not in header
+    assert "H_ray_t" not in header
+
+
+def test_csv_output_can_include_p_slab_columns(tmp_path):
+    rows = [{
+        "pdb": "test", "resolution": 1.5,
+        "pi_chain": "A", "pi_res": "PHE", "pi_id": "1",
+        "X_chain": "A", "X_res": "SER", "X_id": "2",
+        "X_atom": "OG", "H_atom": "HG", "H_source": "experimental",
+        "is_hudson": 1, "is_plevin": 1, "is_p_slab": 1,
+        "dist_X_centroid": 3.0, "dist_X_Pi": 3.0,
+        "proj_dist": 0.0, "theta": 0.0, "angle_XPCN": 0.0,
+        "angle_XH_Pi": 180.0, "P_radius": 2.0,
+        "P_slab_half_thickness": 0.5, "h_proj_dist": 0.0, "H_ray_t": 2.5,
+        "is_trp_5ring_acceptor": 0, "is_pi_pi_tshaped": 0, "sym_op": 0,
+    }]
+
+    out_path = tmp_path / "hits.csv"
+    with output.ResultStreamer(out_path, "csv", verbose=False, include_p_slab=True) as streamer:
+        streamer.write_chunk(rows)
+
+    with out_path.open(newline="", encoding="utf-8") as handle:
+        header = next(csv.reader(handle))
+
+    assert "is_p_slab" in header
+    assert "h_proj_dist" in header
+    assert "H_ray_t" in header
+
+
+def test_candidate_csv_output_includes_direction_geometry_without_p_slab_label(tmp_path):
+    rows = [{
+        "pdb": "test", "resolution": 1.5,
+        "pi_chain": "A", "pi_res": "PHE", "pi_id": "1",
+        "X_chain": "A", "X_res": "SER", "X_id": "2",
+        "X_atom": "OG", "H_atom": "HG", "H_source": "experimental",
+        "is_xh_candidate": 1, "is_hudson": 0, "is_plevin": 0, "is_p_slab": 0,
+        "is_hudson_spatial": 1, "is_plevin_spatial": 1,
+        "hudson_dist_ok": 1, "hudson_proj_ok": 1, "hudson_direction_ok": 0,
+        "plevin_dist_ok": 1, "plevin_xpcn_ok": 1, "plevin_direction_ok": 0,
+        "dist_X_centroid": 3.0, "dist_X_Pi": 3.0,
+        "proj_dist": 0.0, "theta": None, "angle_XPCN": 0.0,
+        "angle_XH_Pi": 0.0, "P_radius": 2.0,
+        "P_slab_half_thickness": 0.5, "h_proj_dist": None, "H_ray_t": None,
+        "H_ray_entry_dist": None, "h_plane_proj_dist": None, "H_plane_t": None,
+        "H_plane_entry_dist": None, "xh_centroid_cos": -1.0,
+        "xh_lateral_inward_score": None, "delta_h_proj_dist": None,
+        "is_trp_5ring_acceptor": 0, "is_pi_pi_tshaped": 0, "sym_op": 0,
+    }]
+
+    out_path = tmp_path / "candidates.csv"
+    with output.ResultStreamer(
+            out_path, "csv", verbose=False, include_xh_candidates=True) as streamer:
+        streamer.write_chunk(rows)
+
+    with out_path.open(newline="", encoding="utf-8") as handle:
+        header = next(csv.reader(handle))
+
+    assert "is_xh_candidate" in header
+    assert "is_hudson_spatial" in header
+    assert "hudson_direction_ok" in header
+    assert "h_proj_dist" in header
+    assert "H_plane_entry_dist" in header
+    assert "xh_centroid_cos" in header
+    assert "is_p_slab" not in header

@@ -10,15 +10,13 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any, NamedTuple
 
-import gemmi
-
 try:
-    from xpid import prep, core, config
+    from xpid import prep, core, config, structure_io
     from xpid.output import ResultStreamer
     from xpid.resolver import gather_inputs
 except ImportError:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from xpid import prep, core, config
+    from xpid import prep, core, config, structure_io
     from xpid.output import ResultStreamer
     from xpid.resolver import gather_inputs
 
@@ -35,12 +33,15 @@ H_MODE_MAP = {
 logger = logging.getLogger("xpid")
 
 
-SYSTEM_SUMMARY_KEYS = (
+BASE_SYSTEM_SUMMARY_KEYS = (
     "hudson",
     "plevin",
-    "p_slab",
     "hudson_plevin_union",
     "hudson_plevin",
+)
+
+P_SLAB_SYSTEM_SUMMARY_KEYS = (
+    "p_slab",
     "all_three",
 )
 
@@ -56,6 +57,9 @@ class TaskPacket(NamedTuple):
     verbose: bool
     model_mode: str
     use_cone: bool
+    include_p_slab: bool
+    report_xh_candidates: bool
+    allow_remote_recovery: bool
     min_occ: float
     sym_contacts: bool
     include_water: bool
@@ -83,28 +87,32 @@ def setup_logging(log_file: Path):
     )
 
 
-def empty_system_summary() -> Dict[str, int]:
-    return {key: 0 for key in SYSTEM_SUMMARY_KEYS}
+def empty_system_summary(include_p_slab: bool = False) -> Dict[str, int]:
+    keys = BASE_SYSTEM_SUMMARY_KEYS
+    if include_p_slab:
+        keys = keys + P_SLAB_SYSTEM_SUMMARY_KEYS
+    return {key: 0 for key in keys}
 
 
-def summarize_systems(results: List[Dict[str, Any]]) -> Dict[str, int]:
-    summary = empty_system_summary()
+def summarize_systems(results: List[Dict[str, Any]], include_p_slab: bool = False) -> Dict[str, int]:
+    summary = empty_system_summary(include_p_slab)
     for row in results:
         is_hudson = int(row.get("is_hudson", 0))
         is_plevin = int(row.get("is_plevin", 0))
-        is_p_slab = int(row.get("is_p_slab", 0))
 
         summary["hudson"] += is_hudson
         summary["plevin"] += is_plevin
-        summary["p_slab"] += is_p_slab
         summary["hudson_plevin_union"] += int(bool(is_hudson or is_plevin))
         summary["hudson_plevin"] += int(bool(is_hudson and is_plevin))
-        summary["all_three"] += int(bool(is_hudson and is_plevin and is_p_slab))
+        if include_p_slab:
+            is_p_slab = int(row.get("is_p_slab", 0))
+            summary["p_slab"] += is_p_slab
+            summary["all_three"] += int(bool(is_hudson and is_plevin and is_p_slab))
     return summary
 
 
 def add_system_summary(total: Dict[str, int], chunk: Dict[str, int]):
-    for key in SYSTEM_SUMMARY_KEYS:
+    for key in total:
         total[key] += chunk.get(key, 0)
 
 
@@ -118,16 +126,17 @@ def process_one_file(task: TaskPacket):
     pdb_code = task.filepath.stem.split('.')[0].lower()
 
     try:
-        structure = gemmi.read_structure(str(task.filepath))
+        structure = structure_io.read_structure(
+            task.filepath, allow_remote_recovery=task.allow_remote_recovery)
 
         if not structure or len(structure) == 0:
-            return f"Empty or invalid structure: {task.filepath}", 0, [], None, empty_system_summary()
+            return f"Empty or invalid structure: {task.filepath}", 0, [], None, empty_system_summary(task.include_p_slab)
 
         if task.h_mode > 0:
             structure = prep.add_hydrogens_memory(
                 structure, h_change_val=task.h_mode)
             if structure is None:
-                return f"Hydrogen addition failed: {task.filepath}", 0, [], None, empty_system_summary()
+                return f"Hydrogen addition failed: {task.filepath}", 0, [], None, empty_system_summary(task.include_p_slab)
 
         results = core.detect_interactions_in_structure(
             structure,
@@ -137,6 +146,8 @@ def process_one_file(task: TaskPacket):
             filter_donor_atom=task.filters.get('donor_atom'),
             model_mode=task.model_mode,
             use_cone=task.use_cone,
+            include_p_slab=task.include_p_slab,
+            report_xh_candidates=task.report_xh_candidates,
             min_occ=task.min_occ,
             sym_contacts=task.sym_contacts,
             include_water=task.include_water,
@@ -144,11 +155,14 @@ def process_one_file(task: TaskPacket):
         )
 
         count = len(results)
-        system_summary = summarize_systems(results)
+        system_summary = summarize_systems(results, include_p_slab=task.include_p_slab)
 
         if task.separate:
             out_path = output_dir / f"{pdb_code}.{task.ftype_arg}"
-            with ResultStreamer(out_path, task.ftype_arg, task.verbose) as streamer:
+            with ResultStreamer(
+                out_path, task.ftype_arg, task.verbose,
+                include_p_slab=task.include_p_slab,
+                include_xh_candidates=task.report_xh_candidates) as streamer:
                 streamer.write_chunk(results)
             return None, count, [], str(out_path), system_summary
         else:
@@ -156,7 +170,7 @@ def process_one_file(task: TaskPacket):
 
     except Exception as e:
         import traceback
-        return f"{task.filepath}: {e}\n{traceback.format_exc()}", 0, [], None, empty_system_summary()
+        return f"{task.filepath}: {e}\n{traceback.format_exc()}", 0, [], None, empty_system_summary(task.include_p_slab)
 
 
 # ---------------------------------------------------------------------------
@@ -190,10 +204,16 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Number of CPU cores to use.")
     proc.add_argument('--model', type=str, default="0",
                       help="Model index to analyze (or 'all').")
-    proc.add_argument('--cone', dest='use_cone', action='store_true', default=True,
-                      help="Enable implicit Cone logic for rotatable groups (default).")
+    proc.add_argument('--cone', dest='use_cone', action='store_true', default=False,
+                      help="Enable implicit Cone logic for rotatable groups.")
     proc.add_argument('--no-cone', dest='use_cone', action='store_false',
-                      help="Disable implicit Cone logic for rotatable groups.")
+                      help="Disable implicit Cone logic for rotatable groups (default).")
+    proc.add_argument('--include-p-slab', '--p-slab', dest='include_p_slab',
+                      action='store_true', default=False,
+                      help="Include the optional P-slab system and P-slab output columns.")
+    proc.add_argument('--xh-candidates', dest='report_xh_candidates',
+                      action='store_true', default=False,
+                      help="Export all X-H bonds passing Hudson/Plevin X-position filters, including direction-failed candidates.")
     proc.add_argument('--sym-contacts', action='store_true',
                       help="Detect XH-π interactions across crystallographic symmetry mates.")
     proc.add_argument('--include-water', action='store_true',
@@ -227,6 +247,17 @@ def _default_output_dir(inputs: List[str], files: List[Path]) -> Path:
         return files[0].resolve().parent
 
     return Path.cwd()
+
+
+def _allow_remote_recovery(args: argparse.Namespace, files: List[Path]) -> bool:
+    """Allow RCSB recovery only for one explicitly provided structure file."""
+    if args.pdb_list:
+        return False
+    if len(files) != 1 or len(args.inputs) != 1:
+        return False
+
+    inp = Path(args.inputs[0])
+    return inp.is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +298,12 @@ def main():
     }
 
     h_mode_desc = H_MODE_MAP.get(args.h_mode, "Unknown")
-    cone_status = "Enabled (default)" if args.use_cone else "Disabled"
+    effective_use_cone = args.use_cone and not args.report_xh_candidates
+    cone_status = "Enabled" if effective_use_cone else "Disabled (default)"
+    if args.report_xh_candidates and args.use_cone:
+        logger.warning("[WARN] --cone is ignored in --xh-candidates mode to avoid virtual-H directionality bias.")
+    p_slab_status = "Included" if args.include_p_slab else "Excluded (default)"
+    candidate_status = "Enabled" if args.report_xh_candidates else "Disabled (default)"
     sym_status = "Enabled" if args.sym_contacts else "Disabled"
     water_status = "Included" if args.include_water else "Excluded (default)"
     max_b_status = f"{args.max_b:.1f} \u00c5\u00b2" if args.max_b > 0 else "No filter"
@@ -279,23 +315,30 @@ def main():
     logger.info(f"H-Mode      : {args.h_mode} ({h_mode_desc})")
     logger.info(f"Monomer Lib : {config.DEFAULT_MON_LIB_PATH}")
     logger.info(f"Cone Logic  : {cone_status}")
+    logger.info(f"P-slab      : {p_slab_status}")
+    logger.info(f"X-H Export  : {candidate_status}")
     logger.info(f"Sym Contacts: {sym_status}")
     logger.info(f"Water       : {water_status}")
     logger.info(f"Max B-factor: {max_b_status}")
+    allow_remote_recovery = _allow_remote_recovery(args, files)
+    recovery_status = "Enabled for single direct file" if allow_remote_recovery else "Disabled for batch input"
+    logger.info(f"RCSB Rescue : {recovery_status}")
     print("")
 
     # Step 3: Execute
     ftype_arg = args.file_type.lower()
     tasks = [
         TaskPacket(f, ftype_arg, args.h_mode, str(output_dir),
-                   args.separate, filters, args.verbose, args.model, args.use_cone,
-                   args.min_occ, args.sym_contacts, args.include_water, args.max_b)
+                   args.separate, filters, args.verbose, args.model, effective_use_cone,
+                   args.include_p_slab, args.report_xh_candidates,
+                   allow_remote_recovery, args.min_occ,
+                   args.sym_contacts, args.include_water, args.max_b)
         for f in files
     ]
 
     error_logs: List[str] = []
     total_found = 0
-    system_totals = empty_system_summary()
+    system_totals = empty_system_summary(args.include_p_slab)
 
     try:
         merge_file_path = None
@@ -303,7 +346,10 @@ def main():
 
         if not args.separate:
             merge_file_path = output_dir / f"{args.output_name}.{ftype_arg}"
-            streamer = ResultStreamer(merge_file_path, ftype_arg, args.verbose)
+            streamer = ResultStreamer(
+                merge_file_path, ftype_arg, args.verbose,
+                include_p_slab=args.include_p_slab,
+                include_xh_candidates=args.report_xh_candidates)
             streamer.__enter__()
 
         with multiprocessing.Pool(args.jobs, maxtasksperchild=100) as pool:
@@ -331,13 +377,22 @@ def main():
 
         # Step 4: Summary
         print("-" * 60)
-        print(f"[SUMMARY] Total XH-π interactions detected: {total_found}")
-        print(f"[SUMMARY] Hudson-positive       : {system_totals['hudson']}")
-        print(f"[SUMMARY] Plevin-positive       : {system_totals['plevin']}")
-        print(f"[SUMMARY] P-slab-positive       : {system_totals['p_slab']}")
-        print(f"[SUMMARY] Hudson/Plevin union   : {system_totals['hudson_plevin_union']}")
-        print(f"[SUMMARY] Hudson+Plevin overlap : {system_totals['hudson_plevin']}")
-        print(f"[SUMMARY] All-three overlap     : {system_totals['all_three']}")
+        if args.report_xh_candidates:
+            print(f"[SUMMARY] Total X-H candidates exported       : {total_found}")
+            print(f"[SUMMARY] Hudson-positive among candidates   : {system_totals['hudson']}")
+            print(f"[SUMMARY] Plevin-positive among candidates   : {system_totals['plevin']}")
+            print(f"[SUMMARY] Hudson/Plevin union among candidates: {system_totals['hudson_plevin_union']}")
+            print(f"[SUMMARY] Hudson+Plevin overlap among candidates: {system_totals['hudson_plevin']}")
+            print(f"[SUMMARY] Direction-filter negative candidates: {total_found - system_totals['hudson_plevin_union']}")
+        else:
+            print(f"[SUMMARY] Total XH-π interactions detected: {total_found}")
+            print(f"[SUMMARY] Hudson-positive       : {system_totals['hudson']}")
+            print(f"[SUMMARY] Plevin-positive       : {system_totals['plevin']}")
+            print(f"[SUMMARY] Hudson/Plevin union   : {system_totals['hudson_plevin_union']}")
+            print(f"[SUMMARY] Hudson+Plevin overlap : {system_totals['hudson_plevin']}")
+        if args.include_p_slab:
+            print(f"[SUMMARY] P-slab-positive       : {system_totals['p_slab']}")
+            print(f"[SUMMARY] All-three overlap     : {system_totals['all_three']}")
 
         if error_logs:
             print(f"[WARNING] {len(error_logs)} files failed processing. Check log for details.")
