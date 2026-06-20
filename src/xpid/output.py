@@ -11,29 +11,56 @@ from typing import List, Dict, Any
 
 logger = logging.getLogger("xpid.output")
 
-# Columns included in non-verbose output
-SIMPLE_COLS = [
+# Columns included in non-verbose output by default. P-slab columns are added
+# only when explicitly requested by the CLI/API caller.
+BASE_SIMPLE_COLS = [
     'pdb', 'resolution',
     'pi_chain', 'pi_res', 'pi_id',
     'X_chain', 'X_res', 'X_id', 'X_atom', 'H_atom',
     'H_source',
-    'is_hudson', 'is_plevin', 'is_p_slab',
+    'is_hudson', 'is_plevin',
     'dist_X_centroid', 'dist_X_Pi',
     'proj_dist', 'theta', 'angle_XPCN', 'angle_XH_Pi',
-    'P_radius', 'P_slab_half_thickness', 'h_proj_dist', 'H_ray_t',
     'is_trp_5ring_acceptor', 'is_pi_pi_tshaped', 'sym_op'
 ]
+
+P_GEOMETRY_SIMPLE_COLS = [
+    'P_radius', 'P_slab_half_thickness', 'h_proj_dist', 'H_ray_t',
+    'H_ray_entry_dist', 'h_plane_proj_dist', 'H_plane_t',
+    'H_plane_entry_dist', 'delta_h_proj_dist',
+]
+
+P_SLAB_SIMPLE_COLS = ['is_p_slab'] + P_GEOMETRY_SIMPLE_COLS
+
+CANDIDATE_SIMPLE_COLS = [
+    'is_xh_candidate', 'is_hudson_spatial', 'is_plevin_spatial',
+    'hudson_dist_ok', 'hudson_proj_ok', 'hudson_direction_ok',
+    'plevin_dist_ok', 'plevin_xpcn_ok', 'plevin_direction_ok',
+    'xh_centroid_cos', 'xh_lateral_inward_score',
+]
+
+SIMPLE_COLS = BASE_SIMPLE_COLS
+P_SLAB_LABEL_KEYS = {'is_p_slab'}
+P_GEOMETRY_OUTPUT_KEYS = set(P_GEOMETRY_SIMPLE_COLS)
+P_SLAB_OUTPUT_KEYS = set(P_SLAB_SIMPLE_COLS)
+CANDIDATE_OUTPUT_KEYS = set(CANDIDATE_SIMPLE_COLS)
 
 FLOAT_COLS = {
     'resolution', 'dist_X_centroid', 'dist_X_Pi', 'proj_dist', 'theta',
     'angle_XPCN', 'angle_XH_Pi', 'P_radius', 'P_slab_half_thickness',
-    'h_proj_dist', 'H_ray_t', 'pi_avg_b', 'pi_center_x', 'pi_center_y',
-    'pi_center_z', 'X_b', 'X_xyz_x', 'X_xyz_y', 'X_xyz_z',
+    'h_proj_dist', 'H_ray_t', 'H_ray_entry_dist', 'h_plane_proj_dist',
+    'H_plane_t', 'H_plane_entry_dist', 'delta_h_proj_dist',
+    'xh_centroid_cos', 'xh_lateral_inward_score',
+    'pi_avg_b', 'pi_center_x', 'pi_center_y', 'pi_center_z',
+    'X_b', 'X_xyz_x', 'X_xyz_y', 'X_xyz_z',
 }
 
 INT_COLS = {
     'is_hudson', 'is_plevin', 'is_p_slab', 'is_trp_5ring_acceptor',
-    'is_pi_pi_tshaped', 'seq_sep', 'sym_op',
+    'is_pi_pi_tshaped', 'seq_sep', 'sym_op', 'is_xh_candidate',
+    'is_hudson_spatial', 'is_plevin_spatial', 'hudson_dist_ok',
+    'hudson_proj_ok', 'hudson_direction_ok', 'plevin_dist_ok',
+    'plevin_xpcn_ok', 'plevin_direction_ok',
 }
 
 
@@ -44,10 +71,14 @@ class ResultStreamer:
     incrementally to avoid holding full datasets in memory.
     """
 
-    def __init__(self, output_path: Path, file_type: str, verbose: bool):
+    def __init__(self, output_path: Path, file_type: str, verbose: bool,
+                 include_p_slab: bool = False,
+                 include_xh_candidates: bool = False):
         self.output_path = output_path
         self.file_type = file_type.lower()
         self.verbose = verbose
+        self.include_p_slab = include_p_slab
+        self.include_xh_candidates = include_xh_candidates
         self.file_handle = None
         self.csv_writer = None
         self.parquet_writer = None
@@ -95,17 +126,18 @@ class ResultStreamer:
 
         if self.file_type == 'csv':
             if self.is_first_chunk:
-                headers = results[0].keys() if self.verbose else SIMPLE_COLS
+                headers = self._headers(results[0])
                 self.csv_writer = csv.DictWriter(self.file_handle, fieldnames=headers)
                 self.csv_writer.writeheader()
                 self.is_first_chunk = False
-            rows = results if self.verbose else [{k: r[k] for k in SIMPLE_COLS} for r in results]
+            rows = [self._row_for_output(r) for r in results]
             self.csv_writer.writerows(rows)
 
         elif self.file_type == 'json':
             comma = '' if self.is_first_chunk else ',\n'
             for r in results:
-                self.file_handle.write(comma + json.dumps(r, indent=2 if self.verbose else None))
+                self.file_handle.write(comma + json.dumps(
+                    self._row_for_output(r), indent=2 if self.verbose else None))
                 comma = ',\n'
             self.is_first_chunk = False
 
@@ -119,9 +151,7 @@ class ResultStreamer:
             self.parquet_writer.write_table(table)
 
     def _dataframe_for_parquet(self, results: List[Dict[str, Any]]):
-        df = self.pd.DataFrame(results)
-        if not self.verbose:
-            df = df[SIMPLE_COLS]
+        df = self.pd.DataFrame([self._row_for_output(r) for r in results])
 
         for col in FLOAT_COLS.intersection(df.columns):
             df[col] = self.pd.to_numeric(df[col], errors='coerce')
@@ -129,3 +159,32 @@ class ResultStreamer:
             df[col] = self.pd.to_numeric(df[col], errors='coerce').astype('Int64')
 
         return df
+
+    def _simple_cols(self) -> List[str]:
+        if self.include_xh_candidates:
+            cols = (
+                BASE_SIMPLE_COLS[:11] +
+                CANDIDATE_SIMPLE_COLS[:1] +
+                (['is_p_slab'] if self.include_p_slab else []) +
+                BASE_SIMPLE_COLS[11:] +
+                CANDIDATE_SIMPLE_COLS[1:] +
+                P_GEOMETRY_SIMPLE_COLS
+            )
+            return cols
+        if self.include_p_slab:
+            return BASE_SIMPLE_COLS[:11] + P_SLAB_SIMPLE_COLS[:1] + BASE_SIMPLE_COLS[11:] + P_SLAB_SIMPLE_COLS[1:]
+        return BASE_SIMPLE_COLS
+
+    def _headers(self, first_result: Dict[str, Any]):
+        if not self.verbose:
+            return self._simple_cols()
+        return self._row_for_output(first_result).keys()
+
+    def _row_for_output(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        if self.verbose:
+            if self.include_p_slab:
+                return row
+            if self.include_xh_candidates:
+                return {k: v for k, v in row.items() if k not in P_SLAB_LABEL_KEYS}
+            return {k: v for k, v in row.items() if k not in P_SLAB_OUTPUT_KEYS}
+        return {k: row.get(k) for k in self._simple_cols()}
