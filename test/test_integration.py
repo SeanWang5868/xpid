@@ -3,7 +3,7 @@ import inspect
 from pathlib import Path
 
 import gemmi
-from xpid import cli, core, config, detect, output, prep
+from xpid import cli, core, config, detect, output, prep, resolver
 
 
 def _atom(name, element, xyz, b_iso=10.0, occ=1.0, altloc="\0"):
@@ -217,6 +217,31 @@ def test_cli_enables_remote_recovery_only_for_single_direct_file(tmp_path):
         "--pdb-list", str(pdb_list), "--pdb-mirror", str(tmp_path)
     ])
     assert cli._allow_remote_recovery(list_args, [single]) is False
+
+
+def test_directory_input_collects_structure_extensions_recursively(tmp_path):
+    root = tmp_path / "structures"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+
+    expected = [
+        root / "5abc.cif",
+        root / "6def.cif.gz",
+        root / "model_one.mmcif",
+        nested / "model_two.mmcif.gz",
+        nested / "custom_name.pdb",
+        nested / "custom_name.pdb.gz",
+    ]
+    ignored = [
+        root / "notes.txt",
+        nested / "map.ccp4",
+    ]
+    for candidate in expected + ignored:
+        candidate.write_bytes(b"")
+
+    found = resolver.gather_inputs([str(root)], None, None, None)
+
+    assert found == sorted(candidate.resolve() for candidate in expected)
 
 
 def test_cation_pi_donors_are_excluded_from_core_detection():
