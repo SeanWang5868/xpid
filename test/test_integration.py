@@ -106,10 +106,12 @@ def test_api_and_core_default_disable_cone_and_p_slab():
     assert api_sig.parameters["include_p_slab"].default is False
     assert api_sig.parameters["report_xh_candidates"].default is False
     assert api_sig.parameters["include_coordinates"].default is False
+    assert api_sig.parameters["residue_pair"].default is None
     assert core_sig.parameters["use_cone"].default is False
     assert core_sig.parameters["include_p_slab"].default is False
     assert core_sig.parameters["report_xh_candidates"].default is False
     assert core_sig.parameters["include_coordinates"].default is False
+    assert core_sig.parameters["residue_pair"].default is None
 
 
 def test_cli_parser_default_disables_cone_and_p_slab():
@@ -120,6 +122,14 @@ def test_cli_parser_default_disables_cone_and_p_slab():
     assert args.include_p_slab is False
     assert args.report_xh_candidates is False
     assert args.include_coordinates is False
+    assert args.residue_pair is None
+
+
+def test_cli_parser_accepts_residue_pair_selectors():
+    parser = cli._build_parser()
+    args = parser.parse_args(["dummy.cif", "--residue-pair", "//A/12", "//A/18"])
+
+    assert args.residue_pair == ["//A/12", "//A/18"]
 
 
 def test_read_structure_falls_back_to_rcsb_for_corrupt_named_gzip(tmp_path, monkeypatch):
@@ -220,6 +230,81 @@ def test_cation_pi_donors_are_excluded_from_core_detection():
     chain.add_residue(lys)
 
     assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+
+
+def test_residue_pair_filter_keeps_only_selected_inter_residue_contacts():
+    st = _structure_with_phe_and_og()
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(3)
+    ser.add_atom(_atom("OG", "O", (0.5, 0.0, 3.0)))
+    ser.add_atom(_atom("HG", "H", (0.5, 0.0, 2.0)))
+    chain.add_residue(ser)
+
+    all_hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+    assert {hit["X_id"].strip() for hit in all_hits} == {"2", "3"}
+
+    pair_hits = core.detect_interactions_in_structure(
+        _structure_with_phe_and_og(), "test", use_cone=False,
+        residue_pair=("//A/1", "//A/2"))
+    assert len(pair_hits) == 1
+    assert pair_hits[0]["pi_id"].strip() == "1"
+    assert pair_hits[0]["X_id"].strip() == "2"
+
+
+def test_residue_pair_filter_is_direction_agnostic():
+    hits = core.detect_interactions_in_structure(
+        _structure_with_phe_and_og(), "test", use_cone=False,
+        residue_pair=("//A/2", "//A/1"))
+
+    assert len(hits) == 1
+    assert hits[0]["pi_id"].strip() == "1"
+    assert hits[0]["X_id"].strip() == "2"
+
+
+def test_residue_pair_filter_returns_empty_for_unmatched_pair():
+    hits = core.detect_interactions_in_structure(
+        _structure_with_phe_and_og(), "test", use_cone=False,
+        residue_pair=("//A/1", "//A/99"))
+
+    assert hits == []
+
+
+def test_residue_pair_filter_respects_chain_in_selection():
+    st = _structure_with_phe_and_og()
+    model = st[0]
+    chain_b = gemmi.Chain("B")
+
+    phe = gemmi.Residue()
+    phe.name = "PHE"
+    phe.seqid = _seqid(1)
+    ring = {
+        "CG": (1.4, 0.0, 0.0),
+        "CD1": (0.7, 1.212, 0.0),
+        "CE1": (-0.7, 1.212, 0.0),
+        "CZ": (-1.4, 0.0, 0.0),
+        "CE2": (-0.7, -1.212, 0.0),
+        "CD2": (0.7, -1.212, 0.0),
+    }
+    for name, xyz in ring.items():
+        phe.add_atom(_atom(name, "C", xyz))
+    chain_b.add_residue(phe)
+
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.0)))
+    ser.add_atom(_atom("HG", "H", (0.0, 0.0, 2.0)))
+    chain_b.add_residue(ser)
+    model.add_chain(chain_b)
+
+    hits = core.detect_interactions_in_structure(
+        st, "test", use_cone=False, residue_pair=("//A/1", "//A/2"))
+
+    assert len(hits) == 1
+    assert hits[0]["pi_chain"] == "A"
+    assert hits[0]["X_chain"] == "A"
 
 
 def test_hydrogen_atoms_are_not_x_donors():

@@ -173,6 +173,7 @@ a zero-thickness disk.
 | `--pi-res` | Limit π-acceptor residues, for example `TRP,TYR`. |
 | `--donor-res` | Limit donor residues, for example `LYS,ARG`. |
 | `--donor-atom` | Limit donor element symbols or exact atom names, for example `N,O,C` or `OG,NZ`. |
+| `--residue-pair SEL1 SEL2` | Restrict detection to XH–π interactions between two residue selections, for example `--residue-pair //A/12 //A/18`. Either selected residue can be the π acceptor; all donor atoms on the opposite residue are considered. |
 | `--min-occ N` | Minimum combined occupancy to report. Default: 0.0. |
 
 ## Output Data

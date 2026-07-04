@@ -8,7 +8,7 @@ import multiprocessing
 import os
 import sys
 from pathlib import Path
-from typing import List, Dict, Any, NamedTuple
+from typing import List, Dict, Any, NamedTuple, Optional
 
 try:
     from xpid import prep, core, config, structure_io
@@ -60,6 +60,7 @@ class TaskPacket(NamedTuple):
     include_p_slab: bool
     report_xh_candidates: bool
     include_coordinates: bool
+    residue_pair: Optional[tuple[str, str]]
     allow_remote_recovery: bool
     min_occ: float
     sym_contacts: bool
@@ -150,6 +151,7 @@ def process_one_file(task: TaskPacket):
             include_p_slab=task.include_p_slab,
             report_xh_candidates=task.report_xh_candidates,
             include_coordinates=task.include_coordinates,
+            residue_pair=task.residue_pair,
             min_occ=task.min_occ,
             sym_contacts=task.sym_contacts,
             include_water=task.include_water,
@@ -233,6 +235,8 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Filter: Donor residues (e.g. LYS,ARG).")
     filt.add_argument('--donor-atom', type=str,
                       help="Filter: Donor element symbols or exact atom names (e.g. N,O,C or OG,NZ).")
+    filt.add_argument('--residue-pair', nargs=2, metavar=('SEL1', 'SEL2'),
+                      help="Restrict detection to XH-pi interactions between two residue selections, e.g. //A/12 //A/18.")
     filt.add_argument('--min-occ', type=float, default=0.0,
                       help="Minimum combined occupancy to report (default: 0.0).")
 
@@ -327,6 +331,8 @@ def main():
     logger.info(f"Sym Contacts: {sym_status}")
     logger.info(f"Water       : {water_status}")
     logger.info(f"Max B-factor: {max_b_status}")
+    if args.residue_pair:
+        logger.info(f"Residue Pair: {args.residue_pair[0]} <-> {args.residue_pair[1]}")
     allow_remote_recovery = _allow_remote_recovery(args, files)
     recovery_status = "Enabled for single direct file" if allow_remote_recovery else "Disabled for batch input"
     logger.info(f"RCSB Rescue : {recovery_status}")
@@ -338,7 +344,9 @@ def main():
         TaskPacket(f, ftype_arg, args.h_mode, str(output_dir),
                    args.separate, filters, args.verbose, args.model, effective_use_cone,
                    args.include_p_slab, args.report_xh_candidates,
-                   args.include_coordinates, allow_remote_recovery, args.min_occ,
+                   args.include_coordinates,
+                   tuple(args.residue_pair) if args.residue_pair else None,
+                   allow_remote_recovery, args.min_occ,
                    args.sym_contacts, args.include_water, args.max_b)
         for f in files
     ]

@@ -15,6 +15,8 @@ from . import ss
 
 logger = logging.getLogger("xpid.core")
 
+ResiduePairKeys = Optional[tuple[Set[tuple], Set[tuple]]]
+
 def _pos_to_arr(pos: gemmi.Position) -> np.ndarray:
     """Convert gemmi.Position to numpy array without intermediate list."""
     return np.array([pos.x, pos.y, pos.z])
@@ -74,6 +76,60 @@ def _atom_variants_for_names(residue, atom_names: Set[str]) -> List[tuple]:
                 seen.add(signature)
                 variants.append((alt, selected))
     return variants
+
+
+def _residue_match_key(chain_name: str, residue: gemmi.Residue) -> tuple:
+    return (chain_name, str(residue.seqid).strip())
+
+
+def _resolve_residue_selector_keys(model: gemmi.Model, selector_text: str) -> Set[tuple]:
+    selection = gemmi.Selection(selector_text)
+    keys: Set[tuple] = set()
+    for chain in selection.chains(model):
+        for residue in selection.residues(chain):
+            keys.add(_residue_match_key(chain.name, residue))
+    return keys
+
+
+def _resolve_residue_pair_keys(model: gemmi.Model,
+                               residue_pair: Optional[tuple[str, str]]) -> ResiduePairKeys:
+    if not residue_pair:
+        return None
+    left, right = residue_pair
+    return (
+        _resolve_residue_selector_keys(model, left),
+        _resolve_residue_selector_keys(model, right),
+    )
+
+
+def _residue_in_pair_side(pair_side: Set[tuple], chain_name: str, residue: gemmi.Residue) -> bool:
+    return _residue_match_key(chain_name, residue) in pair_side
+
+
+def _pair_allows_pi_residue(pair_keys: ResiduePairKeys,
+                            chain_name: str, residue: gemmi.Residue) -> bool:
+    if pair_keys is None:
+        return True
+    left, right = pair_keys
+    return (
+        _residue_in_pair_side(left, chain_name, residue) or
+        _residue_in_pair_side(right, chain_name, residue)
+    )
+
+
+def _pair_allows_donor_residue(pair_keys: ResiduePairKeys,
+                               pi_chain_name: str, pi_residue: gemmi.Residue,
+                               donor_chain_name: str, donor_residue: gemmi.Residue) -> bool:
+    if pair_keys is None:
+        return True
+    left, right = pair_keys
+    pi_key = _residue_match_key(pi_chain_name, pi_residue)
+    donor_key = _residue_match_key(donor_chain_name, donor_residue)
+    if pi_key in left:
+        return donor_key in right
+    if pi_key in right:
+        return donor_key in left
+    return False
 
 
 def _dedup_key(hit: Dict[str, Any]) -> tuple:
@@ -360,6 +416,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                      include_p_slab: bool = False,
                                      report_xh_candidates: bool = False,
                                      include_coordinates: bool = False,
+                                     residue_pair: Optional[tuple[str, str]] = None,
                                      min_occ: float = 0.0,
                                      external_ss_index: Optional[Dict] = None,
                                      sym_contacts: bool = False,
@@ -401,11 +458,14 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
     for model, model_id in models_with_ids:
         ns = gemmi.NeighborSearch(model, structure.cell, config.DIST_SEARCH_LIMIT)
         ns.populate(include_h=True)
+        pair_keys = _resolve_residue_pair_keys(model, residue_pair)
 
         for chain in model:
             for residue in chain:
                 res_name = residue.name
                 if filter_pi and res_name not in filter_pi: continue
+                if not _pair_allows_pi_residue(pair_keys, chain.name, residue):
+                    continue
 
                 rings = config.get_aromatic_rings(res_name)
                 if not rings: continue
@@ -419,7 +479,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                             pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
                             pi_atoms, pi_alt, mode, filter_donor, filter_donor_atom, use_cone,
                             include_p_slab, report_xh_candidates, include_coordinates,
-                            ring_size, min_occ,
+                            pair_keys, ring_size, min_occ,
                             sym_contacts=sym_contacts, max_b=max_b
                         ))
     return _deduplicate_hits(results, prefer_directional=not report_xh_candidates)
@@ -454,7 +514,8 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
                     pi_atoms: List[gemmi.Atom], pi_alt: str, mode: str, filter_donor: Optional[List[str]],
                     filter_donor_atom: Optional[List[str]], use_cone: bool,
                     include_p_slab: bool, report_xh_candidates: bool,
-                    include_coordinates: bool, ring_size: int,
+                    include_coordinates: bool, pair_keys: ResiduePairKeys,
+                    ring_size: int,
                     min_occ: float, sym_contacts: bool = False, max_b: float = 0.0):
     hits = []
 
@@ -490,6 +551,8 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         x_res_name = x_res.name
         x_elem = x_atom.element.name.upper()
         if x_elem not in config.TARGET_ELEMENTS_X:
+            continue
+        if not _pair_allows_donor_residue(pair_keys, chain.name, residue, x_cra.chain.name, x_res):
             continue
         
         is_sym_mate = (x_mark.image_idx != 0)
