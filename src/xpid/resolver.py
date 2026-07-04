@@ -80,15 +80,17 @@ def gather_inputs(inputs: List[str], pdb_list: str,
 
     # 1. Direct file or directory inputs
     if inputs:
-        pattern = re.compile(
-            r'^[a-zA-Z0-9]{4}(_final)?\.(cif|pdb)(\.gz)?$', re.IGNORECASE)
+        structure_suffixes = (
+            ".cif", ".mmcif", ".pdb", ".ent",
+            ".cif.gz", ".mmcif.gz", ".pdb.gz", ".ent.gz",
+        )
         for inp in inputs:
             path = Path(inp)
             if path.is_file():
                 final_files.add(path.resolve())
             elif path.is_dir():
                 for p in path.rglob("*"):
-                    if p.is_file() and pattern.match(p.name):
+                    if p.is_file() and p.name.lower().endswith(structure_suffixes):
                         final_files.add(p.resolve())
 
     # 2. PDB list + mirror resolution
