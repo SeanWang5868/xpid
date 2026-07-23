@@ -13,6 +13,7 @@ from . import config
 from . import geometry
 from . import sasa
 from . import cooperativity
+from . import hbond
 from . import ss
 
 logger = logging.getLogger("xpid.core")
@@ -423,7 +424,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                      external_ss_index: Optional[Dict] = None,
                                      sym_contacts: bool = False,
                                      include_water: bool = False,
-                                     max_b: float = 0.0, compute_sasa: bool = False, annotate_cooperativity: bool = False) -> List[Dict[str, Any]]:
+                                     max_b: float = 0.0, compute_sasa: bool = False, annotate_cooperativity: bool = False, annotate_hbond_comp: bool = False) -> List[Dict[str, Any]]:
     results = []
     if not structure or len(structure) == 0: return []
 
@@ -492,6 +493,8 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
     hits = _deduplicate_hits(results, prefer_directional=not report_xh_candidates)
     if annotate_cooperativity:
         hits = cooperativity.annotate_cooperativity(hits)
+    if annotate_hbond_comp:
+        hits = hbond.annotate_hbond_competition(hits, structure)
     return hits
 
 def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.NeighborSearch,
