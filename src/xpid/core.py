@@ -14,6 +14,7 @@ from . import geometry
 from . import sasa
 from . import cooperativity
 from . import hbond
+from . import rings
 from . import ss
 
 logger = logging.getLogger("xpid.core")
@@ -32,53 +33,6 @@ def _round_float(value, ndigits: int):
 def _score_float(hit: Dict[str, Any], key: str, default: float = 999.0) -> float:
     value = hit.get(key)
     return default if value is None else float(value)
-
-
-def _altloc(atom: gemmi.Atom) -> str:
-    return "" if atom.altloc in ("", "\0") else atom.altloc
-
-
-def _sorted_altlocs(altlocs: Set[str]) -> List[str]:
-    return sorted(altlocs, key=lambda alt: (alt != "", alt))
-
-
-def _atom_variants_for_names(residue, atom_names: Set[str]) -> List[tuple]:
-    """Return complete atom-name sets for each compatible altloc state."""
-    atoms_by_name = {name: [] for name in atom_names}
-    for atom in residue:
-        if atom.name in atoms_by_name:
-            atoms_by_name[atom.name].append(atom)
-
-    if any(not atoms for atoms in atoms_by_name.values()):
-        return []
-
-    altlocs = {""}
-    for atoms in atoms_by_name.values():
-        altlocs.update(_altloc(atom) for atom in atoms if _altloc(atom))
-
-    variants = []
-    seen = set()
-    for alt in _sorted_altlocs(altlocs):
-        selected = []
-        for name in sorted(atom_names):
-            atoms = atoms_by_name[name]
-            exact = [atom for atom in atoms if _altloc(atom) == alt]
-            blank = [atom for atom in atoms if _altloc(atom) == ""]
-            if alt:
-                atom = exact[0] if exact else (blank[0] if blank else None)
-            else:
-                atom = blank[0] if blank else None
-            if atom is None:
-                selected = []
-                break
-            selected.append(atom)
-
-        if selected:
-            signature = tuple(id(atom) for atom in selected)
-            if signature not in seen:
-                seen.add(signature)
-                variants.append((alt, selected))
-    return variants
 
 
 def _residue_match_key(chain_name: str, residue: gemmi.Residue) -> tuple:
@@ -216,7 +170,7 @@ def _side_of_plane(point: np.ndarray, plane_point: np.ndarray, canonical_normal:
     return 1 if signed > 0 else -1
 
 
-def _calculate_direction_metrics(rctx: "_RingContext", x_pos: np.ndarray, h_pos: np.ndarray,
+def _calculate_direction_metrics(rctx: "rings._RingContext", x_pos: np.ndarray, h_pos: np.ndarray,
                                  proj_dist: Optional[float]) -> Dict[str, Any]:
     v_xh = h_pos - x_pos
     v_x_centroid = rctx.pi_center_arr - x_pos
@@ -269,7 +223,7 @@ def _calculate_direction_metrics(rctx: "_RingContext", x_pos: np.ndarray, h_pos:
     }
 
 
-def _evaluate_systems(rctx: "_RingContext", x_elem: str, x_pos: np.ndarray, h_pos: np.ndarray,
+def _evaluate_systems(rctx: "rings._RingContext", x_elem: str, x_pos: np.ndarray, h_pos: np.ndarray,
                       dist_x_plane: Optional[float], dist_x_centroid: float,
                       proj_dist: Optional[float]) -> Dict[str, Any]:
     """Calculate Hudson, Plevin, and P-slab metrics for one X-H candidate."""
@@ -348,66 +302,10 @@ def _deduplicate_hits(hits: List[Dict[str, Any]], prefer_directional: bool = Tru
     return deduped
 
 
-class _RingContext(NamedTuple):
-    """Immutable context for one aromatic ring being analyzed."""
-    pdb_name: str
-    resolution: float
-    model: gemmi.Model
-    model_id: str
-    chain: Any  # gemmi.Chain
-    residue: Any  # gemmi.Residue
-    ns: gemmi.NeighborSearch
-    ss_index: Dict
-    pi_center_arr: np.ndarray
-    pi_normal: np.ndarray
-    pi_b_mean: float
-    pi_alt: str
-    mode: str
-    ring_size: int
-    min_occ: float
-    avg_pi_occ: float
-    p_radius: float
-    p_slab_half_thickness: float
-
 BLOCKING_METALS = {
     'ZN', 'FE', 'CU', 'MN', 'MG', 'CO', 'NI', 'CA', 'CD', 'HG',
     'NA', 'K', 'PT', 'AU', 'AG', 'FE2', 'FE3'
 }
-
-def select_best_altconf(structure: gemmi.Structure):
-    """Select highest-occupancy altconf per residue; if tied, prefer alphabetically first (usually 'A')."""
-    for model in structure:
-        for chain in model:
-            for residue in chain:
-                altlocs = set()
-                for atom in residue:
-                    if atom.altloc != '\0':
-                        altlocs.add(atom.altloc)
-                if not altlocs:
-                    continue
-                if len(altlocs) == 1:
-                    for atom in residue:
-                        if atom.altloc != '\0':
-                            atom.altloc = '\0'
-                    continue
-                occ_sum = {alt: 0.0 for alt in altlocs}
-                occ_cnt = {alt: 0 for alt in altlocs}
-                for atom in residue:
-                    if atom.altloc in altlocs:
-                        occ_sum[atom.altloc] += atom.occ
-                        occ_cnt[atom.altloc] += 1
-                avg_occ = {alt: occ_sum[alt] / occ_cnt[alt] if occ_cnt[alt] > 0 else 0.0
-                           for alt in altlocs}
-                best = min(altlocs, key=lambda x: (-avg_occ[x], x))
-                to_remove = []
-                for i in range(len(residue)):
-                    atom = residue[i]
-                    if atom.altloc != '\0' and atom.altloc != best:
-                        to_remove.append(i)
-                    elif atom.altloc == best:
-                        atom.altloc = '\0'
-                for i in reversed(to_remove):
-                    del residue[i]
 
 def detect_interactions_in_structure(structure: gemmi.Structure, 
                                      pdb_name: str,
@@ -475,14 +373,14 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                 if not _pair_allows_pi_residue(pair_keys, chain.name, residue):
                     continue
 
-                rings = config.get_aromatic_rings(res_name)
-                if not rings: continue
+                aromatic_rings = config.get_aromatic_rings(res_name)
+                if not aromatic_rings: continue
 
-                for ring_idx, target_atoms in enumerate(rings):
+                for ring_idx, target_atoms in enumerate(aromatic_rings):
                     ring_size = len(target_atoms)
                     mode = f'ring{ring_idx+1}'
 
-                    for pi_alt, pi_atoms in _atom_variants_for_names(residue, target_atoms):
+                    for pi_alt, pi_atoms in rings._atom_variants_for_names(residue, target_atoms):
                         results.extend(_detect_residue(
                             pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
                             pi_atoms, pi_alt, mode, filter_donor, filter_donor_atom, use_cone,
@@ -545,7 +443,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
     pi_center, pi_center_arr, pi_normal, pi_b_mean = geometry.get_pi_info(pi_atoms)
     p_radius = config.P_RADIUS_BY_RING_SIZE.get(ring_size, config.P_RADIUS_BY_RING_SIZE[6])
     
-    rctx = _RingContext(
+    rctx = rings._RingContext(
         pdb_name=pdb_name, resolution=resolution, model=model, model_id=model_id,
         chain=chain, residue=residue, ns=ns, ss_index=ss_index,
         pi_center_arr=pi_center_arr, pi_normal=pi_normal, pi_b_mean=pi_b_mean,
@@ -653,7 +551,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
     return hits
 
 
-def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
+def _run_explicit_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark,
                         x_pos_arr, is_sym_mate,
                         x_elem, dist_x_pi, dist_x_centroid, proj_dist,
                         combined_occ, sym_op, include_p_slab: bool,
@@ -721,7 +619,7 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
     return found_systems, orig_h_positions
 
 
-def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
+def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
                     x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
                     combined_occ, orig_h_positions, sym_op, needed_systems: Set[str],
                     include_p_slab: bool, include_coordinates: bool,
@@ -897,7 +795,7 @@ def _merge_cone_system_metrics(legacy_best: Optional[Dict[str, Any]],
     return base
 
 
-def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
+def _record_hit(hits: List[Dict[str, Any]], rctx: "rings._RingContext",
                 x_cra, x_atom, h_name: str, dist: float,
                 dist_x_centroid: float, x_pos: np.ndarray, proj: Optional[float],
                 metrics: Dict[str, Any],
@@ -976,8 +874,8 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
         '_combined_occ': float(combined_occ),
         '_pi_ring_key': rctx.mode,
         '_pi_alt': rctx.pi_alt,
-        '_X_alt': _altloc(x_atom),
-        '_H_alt': _altloc(h_atom) if h_atom is not None else "",
+        '_X_alt': rings._altloc(x_atom),
+        '_H_alt': rings._altloc(h_atom) if h_atom is not None else "",
     }
 
     if include_candidate_metrics:
