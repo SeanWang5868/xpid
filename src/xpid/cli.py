@@ -19,6 +19,7 @@ except ImportError:
     from xpid import prep, core, config, structure_io
     from xpid.output import ResultStreamer
     from xpid.resolver import gather_inputs
+from xpid import provenance
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +216,8 @@ def _build_parser() -> argparse.ArgumentParser:
     out.add_argument('--no-cooperativity', action='store_false', dest='cooperativity',
                      help='Disable cooperativity annotation.')
     out.add_argument('--log', action='store_true', help="Save run log to file.")
+    out.add_argument('--provenance', action='store_true',
+                     help='Write a _metadata.json companion file recording all run parameters.')
 
     proc = parser.add_argument_group("Processing Options")
     proc.add_argument('--h-mode', type=int, default=4,
@@ -348,6 +351,10 @@ def main():
     allow_remote_recovery = _allow_remote_recovery(args, files)
     recovery_status = "Enabled for single direct file" if allow_remote_recovery else "Disabled for batch input"
     logger.info(f"RCSB Rescue : {recovery_status}")
+    if args.provenance:
+        meta = provenance.build_metadata(args, output_dir, args.output_name, len(files))
+        provenance.write_metadata(meta, output_dir, args.output_name)
+        logger.info(f"[PROVENANCE] Written to {output_dir / (args.output_name + "_metadata.json")}")
     print("")
 
     # Step 3: Execute
