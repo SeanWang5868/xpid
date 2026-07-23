@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Optional, Union, Set, NamedTuple
 from . import config
 from . import geometry
 from . import sasa
+from . import cooperativity
 from . import ss
 
 logger = logging.getLogger("xpid.core")
@@ -422,7 +423,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                      external_ss_index: Optional[Dict] = None,
                                      sym_contacts: bool = False,
                                      include_water: bool = False,
-                                     max_b: float = 0.0, compute_sasa: bool = False) -> List[Dict[str, Any]]:
+                                     max_b: float = 0.0, compute_sasa: bool = False, annotate_cooperativity: bool = False) -> List[Dict[str, Any]]:
     results = []
     if not structure or len(structure) == 0: return []
 
@@ -488,7 +489,10 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                             pair_keys, ring_size, sasa_map, min_occ,
                             sym_contacts=sym_contacts, max_b=max_b
                         ))
-    return _deduplicate_hits(results, prefer_directional=not report_xh_candidates)
+    hits = _deduplicate_hits(results, prefer_directional=not report_xh_candidates)
+    if annotate_cooperativity:
+        hits = cooperativity.annotate_cooperativity(hits)
+    return hits
 
 def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.NeighborSearch,
                       x_pos: Optional[gemmi.Position] = None) -> bool:

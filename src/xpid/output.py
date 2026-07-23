@@ -88,7 +88,8 @@ class ResultStreamer:
                  include_p_slab: bool = False,
                  include_xh_candidates: bool = False,
                  include_coordinates: bool = False,
-                 include_sasa: bool = False):
+                 include_sasa: bool = False,
+                 include_cooperativity: bool = False):
         self.output_path = output_path
         self.file_type = file_type.lower()
         self.verbose = verbose
@@ -96,6 +97,7 @@ class ResultStreamer:
         self.include_xh_candidates = include_xh_candidates
         self.include_coordinates = include_coordinates
         self.include_sasa = include_sasa
+        self.include_cooperativity = include_cooperativity
         self.file_handle = None
         self.csv_writer = None
         self.parquet_writer = None
@@ -198,6 +200,8 @@ class ResultStreamer:
             return with_coordinates(cols)
         if self.include_sasa:
             cols = cols + SASA_SIMPLE_COLS
+        if self.include_cooperativity:
+            cols = cols + COOP_SIMPLE_COLS
         return with_coordinates(BASE_SIMPLE_COLS)
 
     def _headers(self, first_result: Dict[str, Any]):
@@ -208,6 +212,8 @@ class ResultStreamer:
     def _row_for_output(self, row: Dict[str, Any]) -> Dict[str, Any]:
         if self.verbose:
             if self.include_sasa:
+                return row
+            if self.include_cooperativity:
                 return row
             if self.include_p_slab:
                 return row

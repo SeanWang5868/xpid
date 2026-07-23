@@ -152,6 +152,7 @@ def process_one_file(task: TaskPacket):
             report_xh_candidates=task.report_xh_candidates,
             include_coordinates=task.include_coordinates,
             compute_sasa=task.include_sasa,
+            annotate_cooperativity=task.include_cooperativity,
             residue_pair=task.residue_pair,
             min_occ=task.min_occ,
             sym_contacts=task.sym_contacts,
@@ -169,7 +170,8 @@ def process_one_file(task: TaskPacket):
                 include_p_slab=task.include_p_slab,
                 include_xh_candidates=task.report_xh_candidates,
                 include_coordinates=task.include_coordinates,
-                include_sasa=task.include_sasa) as streamer:
+                include_sasa=task.include_sasa,
+                include_cooperativity=task.include_cooperativity) as streamer:
                 streamer.write_chunk(results)
             return None, count, [], str(out_path), system_summary
         else:
@@ -206,6 +208,8 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Include absolute pi-center, X, H coordinates, pi normal, and X-side columns.")
     out.add_argument('--sasa', action='store_true',
                      help='Include solvent accessible surface area columns (pi_sasa_avg, X_sasa, H_sasa).')
+    out.add_argument('--cooperativity', action='store_true',
+                     help='Annotate hits with cooperativity metrics (donor counts per ring face).')
     out.add_argument('--log', action='store_true', help="Save run log to file.")
 
     proc = parser.add_argument_group("Processing Options")
@@ -350,6 +354,7 @@ def main():
                    args.include_p_slab, args.report_xh_candidates,
                    args.include_coordinates,
                    args.sasa,
+                   args.cooperativity,
                    tuple(args.residue_pair) if args.residue_pair else None,
                    allow_remote_recovery, args.min_occ,
                    args.sym_contacts, args.include_water, args.max_b)
@@ -371,7 +376,8 @@ def main():
                 include_p_slab=args.include_p_slab,
                 include_xh_candidates=args.report_xh_candidates,
                 include_coordinates=args.include_coordinates,
-                include_sasa=args.sasa)
+                include_sasa=args.sasa,
+                include_cooperativity=args.cooperativity)
             streamer.__enter__()
 
         with multiprocessing.Pool(args.jobs, maxtasksperchild=100) as pool:
