@@ -157,15 +157,15 @@ def annotate_hbond_competition(
             if d_ha > HBOND_HA_MAX:
                 continue
 
-            vec_dh = h_pos_arr - x_pos_arr
+            vec_hd = x_pos_arr - h_pos_arr
             vec_ha = a_pos_arr - h_pos_arr
-            norm_dh = np.linalg.norm(vec_dh)
+            norm_hd = np.linalg.norm(vec_hd)
             norm_ha = np.linalg.norm(vec_ha)
 
-            if norm_dh == 0 or norm_ha == 0:
+            if norm_hd == 0 or norm_ha == 0:
                 continue
 
-            cos_angle = np.dot(vec_dh, vec_ha) / (norm_dh * norm_ha)
+            cos_angle = np.dot(vec_hd, vec_ha) / (norm_hd * norm_ha)
             angle_dha = float(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
 
             if angle_dha < HBOND_DHA_MIN:

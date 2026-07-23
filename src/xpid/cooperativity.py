@@ -69,7 +69,7 @@ def annotate_cooperativity(
 
     # Pre-compute per-ring donor counts by face
     ring_stats: Dict[Tuple, Dict[str, Any]] = {}
-    for rkey, ring_hits in ring_groups:
+    for rkey, ring_hits in ring_groups.items():
         positive_donors: set = set()
         negative_donors: set = set()
         unknown_donors: set = set()
