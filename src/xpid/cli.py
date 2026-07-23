@@ -60,6 +60,9 @@ class TaskPacket(NamedTuple):
     include_p_slab: bool
     report_xh_candidates: bool
     include_coordinates: bool
+    include_sasa: bool
+    include_cooperativity: bool
+    include_hbond_comp: bool
     residue_pair: Optional[tuple[str, str]]
     allow_remote_recovery: bool
     min_occ: float
