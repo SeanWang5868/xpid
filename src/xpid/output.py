@@ -9,61 +9,25 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any
 
+from . import schema
+
 logger = logging.getLogger("xpid.output")
 
 # Columns included in non-verbose output by default. P-slab columns are added
 # only when explicitly requested by the CLI/API caller.
-BASE_SIMPLE_COLS = [
-    'pdb', 'resolution',
-    'pi_chain', 'pi_res', 'pi_id',
-    'X_chain', 'X_res', 'X_id', 'X_atom', 'H_atom',
-    'H_source',
-    'is_hudson', 'is_plevin',
-    'dist_X_centroid', 'dist_X_Pi',
-    'proj_dist', 'theta', 'angle_XPCN', 'angle_XH_Pi',
-    'is_trp_5ring_acceptor', 'is_pi_pi_tshaped', 'sym_op'
-]
+BASE_SIMPLE_COLS = schema.SIMPLE_NAMES
 
-P_GEOMETRY_SIMPLE_COLS = [
-    'P_radius', 'P_slab_half_thickness', 'h_proj_dist', 'H_ray_t',
-    'H_ray_entry_dist', 'h_plane_proj_dist', 'H_plane_t',
-    'H_plane_entry_dist', 'delta_h_proj_dist',
-]
+P_GEOMETRY_SIMPLE_COLS = [c for c in schema.P_SLAB_NAMES if c != 'is_p_slab']
 
-P_SLAB_SIMPLE_COLS = ['is_p_slab'] + P_GEOMETRY_SIMPLE_COLS
+P_SLAB_SIMPLE_COLS = schema.P_SLAB_NAMES
 
-CANDIDATE_SIMPLE_COLS = [
-    'is_xh_candidate', 'is_hudson_spatial', 'is_plevin_spatial',
-    'hudson_dist_ok', 'hudson_proj_ok', 'hudson_direction_ok',
-    'plevin_dist_ok', 'plevin_xpcn_ok', 'plevin_direction_ok',
-    'xh_centroid_cos', 'xh_lateral_inward_score',
-]
+CANDIDATE_SIMPLE_COLS = schema.CANDIDATE_NAMES
 
-COORDINATE_SIMPLE_COLS = [
-    'pi_center_x', 'pi_center_y', 'pi_center_z',
-    'pi_normal_x', 'pi_normal_y', 'pi_normal_z',
-    'X_xyz_x', 'X_xyz_y', 'X_xyz_z',
-    'H_xyz_x', 'H_xyz_y', 'H_xyz_z',
-    'pi_sasa_avg', 'X_sasa', 'H_sasa',
-    'hbond_HA_dist', 'hbond_DHA_angle', 'hbond_vs_xhpi_score',
-    'pi_sasa_avg', 'X_sasa', 'H_sasa',
-    'X_side_of_pi',
-]
+COORDINATE_SIMPLE_COLS = [c for c in schema.COORDS_NAMES if c in schema._FIELD_MAP]
 
-SASA_SIMPLE_COLS = [
-    'pi_sasa_avg', 'X_sasa', 'H_sasa',
-]
-
-COOP_SIMPLE_COLS = [
-    'coop_same_face_donors', 'coop_opp_face_donors',
-    'coop_total_donors', 'coop_bi_face',
-]
-
-HBOND_SIMPLE_COLS = [
-    'hbond_competing', 'hbond_acceptor_atom', 'hbond_acceptor_res',
-    'hbond_acceptor_chain', 'hbond_HA_dist', 'hbond_DHA_angle',
-    'hbond_vs_xhpi_score',
-]
+SASA_SIMPLE_COLS = schema.SASA_NAMES
+COOP_SIMPLE_COLS = schema.COOP_NAMES
+HBOND_SIMPLE_COLS = schema.HBOND_NAMES
 
 
 SIMPLE_COLS = BASE_SIMPLE_COLS
@@ -88,16 +52,7 @@ FLOAT_COLS = {
     'pi_sasa_avg', 'X_sasa', 'H_sasa',
 }
 
-INT_COLS = {
-    'is_hudson', 'is_plevin', 'is_p_slab', 'is_trp_5ring_acceptor',
-    'is_pi_pi_tshaped', 'seq_sep', 'sym_op', 'is_xh_candidate',
-    'is_hudson_spatial', 'is_plevin_spatial', 'hudson_dist_ok',
-    'hudson_proj_ok', 'hudson_direction_ok', 'plevin_dist_ok',
-    'plevin_xpcn_ok', 'plevin_direction_ok', 'X_side_of_pi',
-    'coop_same_face_donors', 'coop_opp_face_donors',
-    'coop_total_donors', 'coop_bi_face',
-    'hbond_competing',
-}
+INT_COLS = set(schema._INT_NAMES)
 
 
 class ResultStreamer:
