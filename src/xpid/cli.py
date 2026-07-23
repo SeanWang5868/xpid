@@ -151,6 +151,7 @@ def process_one_file(task: TaskPacket):
             include_p_slab=task.include_p_slab,
             report_xh_candidates=task.report_xh_candidates,
             include_coordinates=task.include_coordinates,
+            compute_sasa=task.include_sasa,
             residue_pair=task.residue_pair,
             min_occ=task.min_occ,
             sym_contacts=task.sym_contacts,
@@ -167,7 +168,8 @@ def process_one_file(task: TaskPacket):
                 out_path, task.ftype_arg, task.verbose,
                 include_p_slab=task.include_p_slab,
                 include_xh_candidates=task.report_xh_candidates,
-                include_coordinates=task.include_coordinates) as streamer:
+                include_coordinates=task.include_coordinates,
+                include_sasa=task.include_sasa) as streamer:
                 streamer.write_chunk(results)
             return None, count, [], str(out_path), system_summary
         else:
@@ -202,6 +204,8 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Include detailed geometric columns.")
     out.add_argument('--include-coordinates', action='store_true',
                      help="Include absolute pi-center, X, H coordinates, pi normal, and X-side columns.")
+    out.add_argument('--sasa', action='store_true',
+                     help='Include solvent accessible surface area columns (pi_sasa_avg, X_sasa, H_sasa).')
     out.add_argument('--log', action='store_true', help="Save run log to file.")
 
     proc = parser.add_argument_group("Processing Options")
@@ -345,6 +349,7 @@ def main():
                    args.separate, filters, args.verbose, args.model, effective_use_cone,
                    args.include_p_slab, args.report_xh_candidates,
                    args.include_coordinates,
+                   args.sasa,
                    tuple(args.residue_pair) if args.residue_pair else None,
                    allow_remote_recovery, args.min_occ,
                    args.sym_contacts, args.include_water, args.max_b)
@@ -365,7 +370,8 @@ def main():
                 merge_file_path, ftype_arg, args.verbose,
                 include_p_slab=args.include_p_slab,
                 include_xh_candidates=args.report_xh_candidates,
-                include_coordinates=args.include_coordinates)
+                include_coordinates=args.include_coordinates,
+                include_sasa=args.sasa)
             streamer.__enter__()
 
         with multiprocessing.Pool(args.jobs, maxtasksperchild=100) as pool:

@@ -11,6 +11,7 @@ import numpy as np
 from typing import List, Dict, Any, Optional, Union, Set, NamedTuple
 from . import config
 from . import geometry
+from . import sasa
 from . import ss
 
 logger = logging.getLogger("xpid.core")
@@ -421,7 +422,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                      external_ss_index: Optional[Dict] = None,
                                      sym_contacts: bool = False,
                                      include_water: bool = False,
-                                     max_b: float = 0.0) -> List[Dict[str, Any]]:
+                                     max_b: float = 0.0, compute_sasa: bool = False) -> List[Dict[str, Any]]:
     results = []
     if not structure or len(structure) == 0: return []
 
@@ -452,6 +453,11 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
 
     ss_index = external_ss_index if external_ss_index else ss.build_index(structure)
 
+    sasa_map = {}
+    if compute_sasa:
+        sasa_map = sasa.compute_sasa(structure)
+
+
     if sym_contacts:
         structure.setup_cell_images()
 
@@ -479,7 +485,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                             pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
                             pi_atoms, pi_alt, mode, filter_donor, filter_donor_atom, use_cone,
                             include_p_slab, report_xh_candidates, include_coordinates,
-                            pair_keys, ring_size, min_occ,
+                            pair_keys, ring_size, sasa_map, min_occ,
                             sym_contacts=sym_contacts, max_b=max_b
                         ))
     return _deduplicate_hits(results, prefer_directional=not report_xh_candidates)
@@ -515,7 +521,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
                     filter_donor_atom: Optional[List[str]], use_cone: bool,
                     include_p_slab: bool, report_xh_candidates: bool,
                     include_coordinates: bool, pair_keys: ResiduePairKeys,
-                    ring_size: int,
+                    ring_size: int, sasa_map: Dict,
                     min_occ: float, sym_contacts: bool = False, max_b: float = 0.0):
     hits = []
 
@@ -617,7 +623,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         found_systems, orig_h_positions = _run_explicit_track(
             rctx, x_cra, x_atom, x_mark, x_pos_arr, is_sym_mate,
             x_elem, dist_x_pi, dist_x_centroid, proj_dist, combined_occ,
-            sym_op, include_p_slab, report_xh_candidates, include_coordinates, hits
+            sym_op, include_p_slab, report_xh_candidates, include_coordinates, sasa_map, hits
         )
 
         # --- Track 2: Cone rescue ---
@@ -635,7 +641,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
                 rctx, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
                 x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
                 combined_occ, orig_h_positions, sym_op, cone_needed_systems,
-                include_p_slab, include_coordinates, hits
+                include_p_slab, include_coordinates, sasa_map, hits
             )
 
     return hits
@@ -646,6 +652,7 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
                         x_elem, dist_x_pi, dist_x_centroid, proj_dist,
                         combined_occ, sym_op, include_p_slab: bool,
                         report_xh_candidates: bool, include_coordinates: bool,
+                        sasa_map: Dict,
                         hits) -> tuple:
     """Track 1: Explicit hydrogen geometry. Returns (found_systems, orig_h_positions)."""
     found_systems: Set[str] = set()
@@ -702,6 +709,7 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
                     h_atom=h_atom, include_p_slab=include_p_slab,
                     include_candidate_metrics=report_xh_candidates,
                     include_coordinates=include_coordinates,
+                    sasa_map=sasa_map,
                     h_pos=h_pos_arr)
     
     return found_systems, orig_h_positions
@@ -710,7 +718,8 @@ def _run_explicit_track(rctx: _RingContext, x_cra, x_atom, x_mark,
 def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
                     x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
                     combined_occ, orig_h_positions, sym_op, needed_systems: Set[str],
-                    include_p_slab: bool, include_coordinates: bool, hits):
+                    include_p_slab: bool, include_coordinates: bool,
+                     sasa_map: Dict, hits):
     """Track 2: Cone rescue for rotatable groups."""
     if x_res_name not in config.ROTATABLE_MAPPING:
         return
@@ -847,6 +856,7 @@ def _run_cone_track(rctx: _RingContext, x_cra, x_atom, x_mark, x_res, x_res_name
                     is_cone=True, combined_occ=combined_occ, sym_op=sym_op,
                     h_atom=None, include_p_slab=include_p_slab,
                     include_coordinates=include_coordinates,
+                    sasa_map=sasa_map,
                     h_pos=selected_h_pos)
 
 
@@ -891,6 +901,7 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
                 include_p_slab: bool = False,
                 include_candidate_metrics: bool = False,
                 include_coordinates: bool = False,
+                sasa_map: Optional[Dict] = None,
                 h_pos: Optional[np.ndarray] = None):
     
     if combined_occ < rctx.min_occ:
@@ -989,6 +1000,31 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
             'pi_normal_z': _round_float(canonical_normal[2], 6) if canonical_normal is not None else None,
             'X_side_of_pi': _side_of_plane(x_pos, rctx.pi_center_arr, canonical_normal) if canonical_normal is not None else 0,
         })
+
+    if sasa_map:
+        pi_ring_indices = sasa.residue_atom_indices(rctx.residue)
+        hit['pi_sasa_avg'] = _round_float(
+            sasa.average_ring_sasa(sasa_map, 0, rctx.chain.name, rctx.residue, pi_ring_indices), 2)
+        x_atom_idx = None
+        for idx, atom in enumerate(x_cra.residue):
+            if atom is x_atom:
+                x_atom_idx = idx
+                break
+        hit['X_sasa'] = _round_float(
+            sasa.atom_sasa(sasa_map, 0, x_cra.chain.name, str(x_cra.residue.seqid).strip(), x_atom_idx), 2
+        ) if x_atom_idx is not None else None
+        if h_atom is not None:
+            h_atom_idx = None
+            for idx, atom in enumerate(x_cra.residue):
+                if atom is h_atom:
+                    h_atom_idx = idx
+                    break
+            hit['H_sasa'] = _round_float(
+                sasa.atom_sasa(sasa_map, 0, x_cra.chain.name, str(x_cra.residue.seqid).strip(), h_atom_idx), 2
+            ) if h_atom_idx is not None else None
+        else:
+            hit['H_sasa'] = None
+
 
     if include_p_slab or include_candidate_metrics:
         p_geometry = {

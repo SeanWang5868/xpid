@@ -44,6 +44,7 @@ COORDINATE_SIMPLE_COLS = [
     'pi_normal_x', 'pi_normal_y', 'pi_normal_z',
     'X_xyz_x', 'X_xyz_y', 'X_xyz_z',
     'H_xyz_x', 'H_xyz_y', 'H_xyz_z',
+    'pi_sasa_avg', 'X_sasa', 'H_sasa',
     'X_side_of_pi',
 ]
 
@@ -64,6 +65,7 @@ FLOAT_COLS = {
     'pi_normal_x', 'pi_normal_y', 'pi_normal_z',
     'X_b', 'X_xyz_x', 'X_xyz_y', 'X_xyz_z',
     'H_xyz_x', 'H_xyz_y', 'H_xyz_z',
+    'pi_sasa_avg', 'X_sasa', 'H_sasa',
 }
 
 INT_COLS = {
@@ -85,13 +87,15 @@ class ResultStreamer:
     def __init__(self, output_path: Path, file_type: str, verbose: bool,
                  include_p_slab: bool = False,
                  include_xh_candidates: bool = False,
-                 include_coordinates: bool = False):
+                 include_coordinates: bool = False,
+                 include_sasa: bool = False):
         self.output_path = output_path
         self.file_type = file_type.lower()
         self.verbose = verbose
         self.include_p_slab = include_p_slab
         self.include_xh_candidates = include_xh_candidates
         self.include_coordinates = include_coordinates
+        self.include_sasa = include_sasa
         self.file_handle = None
         self.csv_writer = None
         self.parquet_writer = None
@@ -192,6 +196,8 @@ class ResultStreamer:
         if self.include_p_slab:
             cols = BASE_SIMPLE_COLS[:11] + P_SLAB_SIMPLE_COLS[:1] + BASE_SIMPLE_COLS[11:] + P_SLAB_SIMPLE_COLS[1:]
             return with_coordinates(cols)
+        if self.include_sasa:
+            cols = cols + SASA_SIMPLE_COLS
         return with_coordinates(BASE_SIMPLE_COLS)
 
     def _headers(self, first_result: Dict[str, Any]):
@@ -201,6 +207,8 @@ class ResultStreamer:
 
     def _row_for_output(self, row: Dict[str, Any]) -> Dict[str, Any]:
         if self.verbose:
+            if self.include_sasa:
+                return row
             if self.include_p_slab:
                 return row
             if self.include_xh_candidates:
