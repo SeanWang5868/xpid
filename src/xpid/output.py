@@ -45,8 +45,26 @@ COORDINATE_SIMPLE_COLS = [
     'X_xyz_x', 'X_xyz_y', 'X_xyz_z',
     'H_xyz_x', 'H_xyz_y', 'H_xyz_z',
     'pi_sasa_avg', 'X_sasa', 'H_sasa',
+    'hbond_HA_dist', 'hbond_DHA_angle', 'hbond_vs_xhpi_score',
+    'pi_sasa_avg', 'X_sasa', 'H_sasa',
     'X_side_of_pi',
 ]
+
+SASA_SIMPLE_COLS = [
+    'pi_sasa_avg', 'X_sasa', 'H_sasa',
+]
+
+COOP_SIMPLE_COLS = [
+    'coop_same_face_donors', 'coop_opp_face_donors',
+    'coop_total_donors', 'coop_bi_face',
+]
+
+HBOND_SIMPLE_COLS = [
+    'hbond_competing', 'hbond_acceptor_atom', 'hbond_acceptor_res',
+    'hbond_acceptor_chain', 'hbond_HA_dist', 'hbond_DHA_angle',
+    'hbond_vs_xhpi_score',
+]
+
 
 SIMPLE_COLS = BASE_SIMPLE_COLS
 P_SLAB_LABEL_KEYS = {'is_p_slab'}
@@ -66,6 +84,8 @@ FLOAT_COLS = {
     'X_b', 'X_xyz_x', 'X_xyz_y', 'X_xyz_z',
     'H_xyz_x', 'H_xyz_y', 'H_xyz_z',
     'pi_sasa_avg', 'X_sasa', 'H_sasa',
+    'hbond_HA_dist', 'hbond_DHA_angle', 'hbond_vs_xhpi_score',
+    'pi_sasa_avg', 'X_sasa', 'H_sasa',
 }
 
 INT_COLS = {
@@ -74,6 +94,9 @@ INT_COLS = {
     'is_hudson_spatial', 'is_plevin_spatial', 'hudson_dist_ok',
     'hudson_proj_ok', 'hudson_direction_ok', 'plevin_dist_ok',
     'plevin_xpcn_ok', 'plevin_direction_ok', 'X_side_of_pi',
+    'coop_same_face_donors', 'coop_opp_face_donors',
+    'coop_total_donors', 'coop_bi_face',
+    'hbond_competing',
 }
 
 
@@ -97,6 +120,8 @@ class ResultStreamer:
         self.include_p_slab = include_p_slab
         self.include_xh_candidates = include_xh_candidates
         self.include_coordinates = include_coordinates
+        self.include_sasa = include_sasa
+        self.include_cooperativity = include_cooperativity
         self.include_sasa = include_sasa
         self.include_cooperativity = include_cooperativity
         self.include_hbond_comp = include_hbond_comp
@@ -206,6 +231,13 @@ class ResultStreamer:
             cols = cols + COOP_SIMPLE_COLS
         if self.include_hbond_comp:
             cols = cols + HBOND_SIMPLE_COLS
+        cols = list(BASE_SIMPLE_COLS)
+        if self.include_sasa:
+            cols.extend(SASA_SIMPLE_COLS)
+        if self.include_cooperativity:
+            cols.extend(COOP_SIMPLE_COLS)
+        if self.verbose:
+            cols.extend(HBOND_SIMPLE_COLS)
         return with_coordinates(BASE_SIMPLE_COLS)
 
     def _headers(self, first_result: Dict[str, Any]):

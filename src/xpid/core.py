@@ -424,7 +424,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                      external_ss_index: Optional[Dict] = None,
                                      sym_contacts: bool = False,
                                      include_water: bool = False,
-                                     max_b: float = 0.0, compute_sasa: bool = False, annotate_cooperativity: bool = False, annotate_hbond_comp: bool = False) -> List[Dict[str, Any]]:
+                                     max_b: float = 0.0, compute_sasa: bool = False, annotate_cooperativity: bool = True) -> List[Dict[str, Any]]:
     results = []
     if not structure or len(structure) == 0: return []
 
@@ -493,8 +493,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
     hits = _deduplicate_hits(results, prefer_directional=not report_xh_candidates)
     if annotate_cooperativity:
         hits = cooperativity.annotate_cooperativity(hits)
-    if annotate_hbond_comp:
-        hits = hbond.annotate_hbond_competition(hits, structure)
+    hits = hbond.annotate_hbond_competition(hits, structure)
     return hits
 
 def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.NeighborSearch,
@@ -996,12 +995,16 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: _RingContext,
             'xh_lateral_inward_score': _round_float(metrics['xh_lateral_inward_score'], 4) if metrics['xh_lateral_inward_score'] is not None else None,
         })
 
+    # Always store H coordinates (needed for hbond competition)
+    hit.update({
+        'H_xyz_x': _round_float(h_pos[0], 3) if h_pos is not None else None,
+        'H_xyz_y': _round_float(h_pos[1], 3) if h_pos is not None else None,
+        'H_xyz_z': _round_float(h_pos[2], 3) if h_pos is not None else None,
+    })
+
     if include_coordinates:
         canonical_normal = _canonical_unit_normal(rctx.pi_normal)
         hit.update({
-            'H_xyz_x': _round_float(h_pos[0], 3) if h_pos is not None else None,
-            'H_xyz_y': _round_float(h_pos[1], 3) if h_pos is not None else None,
-            'H_xyz_z': _round_float(h_pos[2], 3) if h_pos is not None else None,
             'pi_normal_x': _round_float(canonical_normal[0], 6) if canonical_normal is not None else None,
             'pi_normal_y': _round_float(canonical_normal[1], 6) if canonical_normal is not None else None,
             'pi_normal_z': _round_float(canonical_normal[2], 6) if canonical_normal is not None else None,

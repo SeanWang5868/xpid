@@ -259,7 +259,7 @@ def test_cooperativity_cli_flag_integration():
 def test_hbond_no_competing_acceptor():
     st = _make_phe_ser_structure()
     hits = core.detect_interactions_in_structure(
-        st, "test", include_coordinates=True, annotate_hbond_comp=True)
+        st, "test", include_coordinates=True)
     # In this simple structure the only O near H is the donor's own OG
     for hit in hits:
         assert "hbond_competing" in hit
@@ -300,7 +300,7 @@ def test_hbond_with_nearby_carbonyl():
     st.add_model(model)
 
     hits = core.detect_interactions_in_structure(
-        st, "test", include_coordinates=True, annotate_hbond_comp=True)
+        st, "test", include_coordinates=True)
 
     assert len(hits) > 0
     hit = hits[0]
@@ -321,7 +321,7 @@ def test_hbond_ignores_same_residue_acceptor():
     ser_res.add_atom(_atom("CB", "C", (0.5, 0, 2.0)))
 
     hits = core.detect_interactions_in_structure(
-        st, "test", include_coordinates=True, annotate_hbond_comp=True)
+        st, "test", include_coordinates=True)
 
     assert len(hits) > 0
     assert hits[0]["hbond_competing"] == 0
@@ -342,7 +342,7 @@ def test_hbond_competition_score_negative_for_xhpi():
 def test_hbond_cli_flag_integration():
     st = _make_phe_ser_structure()
     hits = core.detect_interactions_in_structure(
-        st, "test", include_coordinates=True, annotate_hbond_comp=True)
+        st, "test", include_coordinates=True)
     for hit in hits:
         assert "hbond_competing" in hit
         assert "hbond_vs_xhpi_score" in hit
