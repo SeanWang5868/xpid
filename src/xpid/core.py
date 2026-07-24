@@ -522,9 +522,9 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                 if angle_dha < 120.0:
                     continue
 
-                # _hbond_quality ranks pure H-bond strength (0–1).
+                # Pure H-bond quality score (0–1).
                 # Shorter distance + larger angle → higher score.
-                score = _hbond._hbond_quality(d_ha, angle_dha)
+                score = _hbond._competition_score(d_ha, angle_dha)
 
                 if best_for_this_h is None or score > best_for_this_h[2]:
                     best_for_this_h = (d_ha, angle_dha, score)
