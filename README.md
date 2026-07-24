@@ -116,6 +116,9 @@ a zero-thickness disk.
 | `--file-type` | `json`, `csv`, or `parquet`. Default: `json`. |
 | `-v`, `--verbose` | Include detailed geometric columns. |
 | `--include-coordinates` | Include absolute π-center, X, H coordinates, canonical π normal, and `X_side_of_pi`. |
+| `--sasa` | Include solvent accessible surface area columns (`pi_sasa_avg`, `X_sasa`, `H_sasa`). |
+| `--cooperativity` | Annotate hits with cooperativity metrics (donor counts per ring face). Enabled by default; use `--no-cooperativity` to disable. |
+| `--provenance` | Write a `_metadata.json` companion file recording all run parameters for reproducibility. |
 | `--log` | Save a run log. |
 
 ### Processing
@@ -125,8 +128,7 @@ a zero-thickness disk.
 | `--jobs N` | Number of worker processes. Default: 1. |
 | `--h-mode N` | Gemmi hydrogen mode: 0=NoChange, 1=Shift, 2=Remove, 3=ReAdd, 4=ReAddButWater, 5=ReAddKnown. |
 | `--model ID` | Model index to analyze, or `all`. |
-| `--cone` | Enable implicit cone rescue for rotatable groups. |
-| `--no-cone` | Disable implicit cone rescue and use explicit hydrogens only. This is the default. |
+| `--no-cone` | Disable cone rescue. Use explicit hydrogen positions only. Rotatable donors (Ser, Thr, Tyr, Cys, Lys, methyl groups) use cone rescue by default. |
 | `--include-p-slab`, `--p-slab` | Include the optional P-slab system, P-slab output columns, and P-slab summary counts. |
 | `--xh-candidates` | Export all explicit X-H bonds passing Hudson/Plevin X-position filters, including direction-failed candidates. Cone virtual H is ignored in this mode. |
 | `--sym-contacts` | Detect contacts across crystallographic symmetry mates. |
@@ -166,6 +168,13 @@ component is positive; `X_side_of_pi` is `1` when X lies on the positive side of
 that normal, `-1` on the negative side, and `0` when X is effectively in the
 π plane.
 
+
+With `--cooperativity` (default), simple mode additionally includes
+`coop_same_face_donors`, `coop_opp_face_donors`, `coop_total_donors`, and
+`coop_bi_face`.  Verbose mode additionally includes conventional H-bond
+competition columns (`hbond_competing`, `hbond_acceptor_*`, `hbond_HA_dist`,
+`hbond_DHA_angle`, `hbond_vs_xhpi_score`).
+
 Verbose mode adds secondary-structure annotations, P center and X coordinates,
 sequence separation, and B-factors.
 
@@ -185,6 +194,7 @@ directional filters.
 - Same-residue donor/π-acceptor contacts are excluded.
 - The automatic monomer-library download is stored in the user cache, not inside the installed package directory.
 - Output column names currently remain ASCII (`pi_res`, `dist_X_Pi`) to avoid breaking existing scripts. `dist_X_Pi` now means `d(X, P plane)`, not distance from X to the ring centroid.
+- Rotatable donor groups (Ser, Thr, Tyr, Cys, Lys, methyl groups) use cone rescue by default. The algorithm scans 72 hydrogen positions around the X–parent bond axis, filters by steric clash and H-bond competition, then evaluates geometry on surviving conformers. Use `--no-cone` to rely on explicit hydrogens only (appropriate for neutron diffraction or sub-1.0 Å resolution structures).
 
 ## Contact
 
