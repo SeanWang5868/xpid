@@ -41,6 +41,9 @@ def _make_ala_structure():
     return st
 
 
+# TODO: Add parent atoms (CB/CA) to synthetic residues so cone_mode="auto" works.
+# Then remove explicit cone_mode="none" from all test calls.
+
 def _make_phe_ser_structure():
     st = gemmi.Structure()
     st.cell = gemmi.UnitCell(30, 30, 30, 90, 90, 90)

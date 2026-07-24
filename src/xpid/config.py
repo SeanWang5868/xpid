@@ -202,7 +202,8 @@ def is_rotatable(res_name: str, atom_name: str) -> bool:
     """Return True if the donor atom belongs to a rotatable group.
 
     Rotatable groups (OH, SH, CH₃, NH₃⁺) have free internal rotation
-    in solution at room temperature.  Their hydrogen positions in crystal
+    in solution at room temperature (Luz & Meiboom, J. Chem. Phys. 1963, 39:366;
+    Blomberg et al., JACS 1978, 100:7703).  Their hydrogen positions in crystal
     structures are riding hydrogens placed by the refinement program and
     do not reflect the true conformational ensemble.
     """

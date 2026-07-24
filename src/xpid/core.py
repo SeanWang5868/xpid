@@ -172,10 +172,11 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
     if annotate_cooperativity:
         hits = cooperativity.annotate_cooperativity(hits)
     # Annotate H-bond competition
-    # Rotatable donors (cone_virtual): full competition analysis (verbose only)
-    # Rigid donors: binary hbond_also_hbonded flag
-    hbond.annotate_rigid_hbond(hits, structure)
-    hbond.annotate_hbond_competition(hits, structure)
+    # Build a single NeighborSearch shared by both annotation passes
+    _hbond_ns = gemmi.NeighborSearch(structure[0], structure.cell, 5.0)
+    _hbond_ns.populate(include_h=False)
+    hbond.annotate_rigid_hbond(hits, structure, ns=_hbond_ns)
+    hbond.annotate_hbond_competition(hits, structure, ns=_hbond_ns)
     return hits
 
 def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.NeighborSearch,
@@ -270,7 +271,6 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         # Classify donor: rotatable vs rigid
         is_rotatable_donor = config.is_rotatable(x_res_name, x_atom.name)
 
-
         if is_sym_mate:
             if _is_donor_blocked(x_atom, model, ns, x_pos=x_mark.pos):
                 continue
@@ -328,35 +328,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
     return hits
 
 
-def _merge_cone_system_metrics(legacy_best: Optional[Dict[str, Any]],
-                               p_slab_best: Optional[Dict[str, Any]],
-                               needs_legacy: bool,
-                               needs_p_slab: bool) -> Optional[Dict[str, Any]]:
-    """Merge independently selected cone candidates into one reported virtual hit."""
-    if legacy_best is None and p_slab_best is None:
-        return None
 
-    base = dict(legacy_best if legacy_best is not None else p_slab_best)
-
-    base['is_hudson'] = int(needs_legacy and legacy_best is not None and legacy_best['is_hudson'])
-    base['is_plevin'] = int(needs_legacy and legacy_best is not None and legacy_best['is_plevin'])
-    base['is_p_slab'] = int(needs_p_slab and p_slab_best is not None and p_slab_best['is_p_slab'])
-
-    if p_slab_best is not None:
-        base['h_proj_dist'] = p_slab_best['h_proj_dist']
-        base['H_ray_t'] = p_slab_best['H_ray_t']
-        base['H_ray_entry_dist'] = p_slab_best['H_ray_entry_dist']
-        base['h_plane_proj_dist'] = p_slab_best['h_plane_proj_dist']
-        base['H_plane_t'] = p_slab_best['H_plane_t']
-        base['H_plane_entry_dist'] = p_slab_best['H_plane_entry_dist']
-        base['delta_h_proj_dist'] = p_slab_best['delta_h_proj_dist']
-
-    if legacy_best is not None:
-        base['theta'] = legacy_best['theta']
-        base['angle_XPCN'] = legacy_best['angle_XPCN']
-        base['angle_XH_Pi'] = legacy_best['angle_XH_Pi']
-
-    return base
 
 
 def _run_explicit_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark,
@@ -506,9 +478,6 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
             a_elem = a_cra.atom.element.name.upper()
             if a_elem not in ('O', 'N', 'S'):
                 continue
-            # Skip H/D atoms (ns includes them)
-            if a_elem in ('H', 'D'):
-                continue
             if (a_cra.chain.name == x_cra.chain.name and
                 a_cra.residue.seqid == x_res.seqid):
                 continue
@@ -564,7 +533,7 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                 p_slab_best = metrics
                 p_slab_best_h_pos = h_pos_np
 
-    combined = _merge_cone_system_metrics(legacy_best, p_slab_best, True, include_p_slab)
+    combined = _hits._merge_cone_system_metrics(legacy_best, p_slab_best, True, include_p_slab)
     if combined is not None:
         selected_h_pos = legacy_best_h_pos if legacy_best_h_pos is not None else p_slab_best_h_pos
         _hits._record_hit(hits, rctx, x_cra, x_atom, "virt", dist_x_pi,

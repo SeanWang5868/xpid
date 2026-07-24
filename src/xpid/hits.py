@@ -263,6 +263,37 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "rings._RingContext",
     hits.append(hit)
 
 
+def _merge_cone_system_metrics(legacy_best: Optional[Dict[str, Any]],
+                               p_slab_best: Optional[Dict[str, Any]],
+                               needs_legacy: bool,
+                               needs_p_slab: bool) -> Optional[Dict[str, Any]]:
+    """Merge independently selected cone candidates into one reported virtual hit."""
+    if legacy_best is None and p_slab_best is None:
+        return None
+
+    base = dict(legacy_best if legacy_best is not None else p_slab_best)
+
+    base['is_hudson'] = int(needs_legacy and legacy_best is not None and legacy_best['is_hudson'])
+    base['is_plevin'] = int(needs_legacy and legacy_best is not None and legacy_best['is_plevin'])
+    base['is_p_slab'] = int(needs_p_slab and p_slab_best is not None and p_slab_best['is_p_slab'])
+
+    if p_slab_best is not None:
+        base['h_proj_dist'] = p_slab_best['h_proj_dist']
+        base['H_ray_t'] = p_slab_best['H_ray_t']
+        base['H_ray_entry_dist'] = p_slab_best['H_ray_entry_dist']
+        base['h_plane_proj_dist'] = p_slab_best['h_plane_proj_dist']
+        base['H_plane_t'] = p_slab_best['H_plane_t']
+        base['H_plane_entry_dist'] = p_slab_best['H_plane_entry_dist']
+        base['delta_h_proj_dist'] = p_slab_best['delta_h_proj_dist']
+
+    if legacy_best is not None:
+        base['theta'] = legacy_best['theta']
+        base['angle_XPCN'] = legacy_best['angle_XPCN']
+        base['angle_XH_Pi'] = legacy_best['angle_XH_Pi']
+
+    return base
+
+
 def _pos_to_arr(pos: gemmi.Position) -> np.ndarray:
     """Convert gemmi.Position to numpy array without intermediate list."""
     return np.array([pos.x, pos.y, pos.z])

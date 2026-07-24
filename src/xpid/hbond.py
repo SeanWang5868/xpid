@@ -60,6 +60,7 @@ def annotate_hbond_competition(
     hits: List[Dict[str, Any]],
     structure: gemmi.Structure,
     model_index: int = 0,
+    ns: Optional[gemmi.NeighborSearch] = None,
 ) -> List[Dict[str, Any]]:
     """Annotate each hit with conventional H-bond competition metrics.
 
@@ -90,11 +91,12 @@ def annotate_hbond_competition(
     if len(structure) == 0 or model_index >= len(structure):
         return hits
 
-    model = structure[model_index]
-
-    # Build NeighborSearch for the model
-    ns = gemmi.NeighborSearch(model, structure.cell, 5.0)
-    ns.populate(include_h=False)
+    if ns is None:
+        model = structure[model_index]
+        ns = gemmi.NeighborSearch(model, structure.cell, 5.0)
+        ns.populate(include_h=False)
+    else:
+        model = structure[model_index]
 
     for hit in hits:
         # Extract H atom position
@@ -195,7 +197,8 @@ def annotate_hbond_competition(
 
 
 def annotate_rigid_hbond(hits: List[Dict[str, Any]], structure: gemmi.Structure,
-                         model_index: int = 0) -> List[Dict[str, Any]]:
+                         model_index: int = 0,
+                         ns: Optional[gemmi.NeighborSearch] = None) -> List[Dict[str, Any]]:
     """Annotate rigid-donor hits with a binary H-bond flag only.
 
     For rigid donors (backbone N-H, Trp NE1, His, Arg, Asn/Gln sidechains),
@@ -206,9 +209,12 @@ def annotate_rigid_hbond(hits: List[Dict[str, Any]], structure: gemmi.Structure,
     if len(structure) == 0 or model_index >= len(structure):
         return hits
 
-    model = structure[model_index]
-    ns = gemmi.NeighborSearch(model, structure.cell, 5.0)
-    ns.populate(include_h=False)
+    if ns is None:
+        model = structure[model_index]
+        ns = gemmi.NeighborSearch(model, structure.cell, 5.0)
+        ns.populate(include_h=False)
+    else:
+        model = structure[model_index]
 
     for hit in hits:
         # Exclude cone_virtual hits (they go through the competition path)

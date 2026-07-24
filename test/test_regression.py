@@ -24,6 +24,12 @@ def structure_5fjj():
     return st
 
 
+@pytest.fixture(scope="module")
+def hits_5fjj(structure_5fjj):
+    """Run detection once, share results across all regression tests."""
+    return core.detect_interactions_in_structure(structure_5fjj, "5fjj", cone_mode="none")
+
+
 # ---------------------------------------------------------------
 # Sanity: structure loads and has expected properties
 # ---------------------------------------------------------------
@@ -77,7 +83,7 @@ def test_required_columns_present(structure_5fjj):
 
 def test_coordinates_enabled_adds_columns(structure_5fjj):
     hits = core.detect_interactions_in_structure(
-        structure_5fjj, "5fjj", include_coordinates=True)
+        structure_5fjj, "5fjj", include_coordinates=True, cone_mode="none")
     assert len(hits) > 0
     for hit in hits:
         assert "pi_center_x" in hit
@@ -110,7 +116,7 @@ def test_hbond_columns_present(structure_5fjj):
 
 
 def test_sasa_only_with_flag(structure_5fjj):
-    hits_default = core.detect_interactions_in_structure(structure_5fjj, "5fjj")
+    hits_default = core.detect_interactions_in_structure(structure_5fjj, "5fjj", cone_mode="none")
     for hit in hits_default:
         assert "pi_sasa_avg" not in hit
 
@@ -127,7 +133,7 @@ def test_sasa_only_with_flag(structure_5fjj):
 
 def test_p_slab_inclusion_reports_label(structure_5fjj):
     hits = core.detect_interactions_in_structure(
-        structure_5fjj, "5fjj", include_p_slab=True)
+        structure_5fjj, "5fjj", include_p_slab=True, cone_mode="none")
     has_p_slab = any(h.get("is_p_slab") for h in hits)
     # P-slab is stricter; may or may not have hits, but column must exist
     for hit in hits:
