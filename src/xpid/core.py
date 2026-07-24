@@ -475,16 +475,22 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
 
     # --- H-bond competition gate ---
     hbond_candidates = []
+
     if no_hbond_gate:
         hbond_candidates = list(h_candidates_cone)
-    else:
-        # Filter out conformers where the H would be captured by a nearby acceptor.
-        # Reuses the existing NeighborSearch (rctx.ns) instead of building a new one.
+    elif x_elem in ('O', 'N', 'S'):
+        # Polar donor (OH, NH₃⁺, SH): find the strongest H-bond acceptor
+        # across all conformations.  If strong enough, lock H at that
+        # position.  Only that single position is evaluated for XH–π.
         from . import hbond as _hbond
+
+        best_overall_score = None
+        best_hbond_pos = None
 
         for h_pos_np in h_candidates_cone:
             h_pos_gemmi = gemmi.Position(h_pos_np[0], h_pos_np[1], h_pos_np[2])
-            blocked = False
+            best_for_this_h = None  # (d_ha, angle_dha, score)
+
             for a_mark in rctx.ns.find_atoms(h_pos_gemmi, radius=3.0):
                 a_cra = a_mark.to_cra(rctx.model)
                 a_elem = a_cra.atom.element.name.upper()
@@ -493,26 +499,48 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                 if (a_cra.chain.name == x_cra.chain.name and
                     a_cra.residue.seqid == x_res.seqid):
                     continue
+
                 a_pos_arr = _pos_to_arr(a_mark.pos)
                 d_ha = float(np.linalg.norm(a_pos_arr - h_pos_np))
                 if d_ha > 2.8:
                     continue
+
                 vec_hd = x_pos_arr - h_pos_np
                 vec_ha = a_pos_arr - h_pos_np
                 norm_hd = np.linalg.norm(vec_hd)
                 norm_ha = np.linalg.norm(vec_ha)
                 if norm_hd == 0 or norm_ha == 0:
                     continue
+
                 cos_angle = np.dot(vec_hd, vec_ha) / (norm_hd * norm_ha)
                 angle_dha = float(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
                 if angle_dha < 120.0:
                     continue
-                score = _hbond._competition_score(d_ha, angle_dha, dist_x_pi if dist_x_pi is not None else 4.5, None)
-                if score > 0.2:
-                    blocked = True
-                    break
-            if not blocked:
-                hbond_candidates.append(h_pos_np)
+
+                # competition_score with angle_xh_pi=None makes the XH–π term
+                # constant across H positions, so score ranks pure H-bond quality.
+                score = _hbond._competition_score(d_ha, angle_dha,
+                                                   dist_x_pi if dist_x_pi is not None else 4.5, None)
+
+                if best_for_this_h is None or score > best_for_this_h[2]:
+                    best_for_this_h = (d_ha, angle_dha, score)
+
+            if best_for_this_h is not None:
+                if best_overall_score is None or best_for_this_h[2] > best_overall_score:
+                    best_overall_score = best_for_this_h[2]
+                    best_hbond_pos = h_pos_np
+
+        if best_overall_score is not None and best_overall_score > 0.2:
+            # H locked at the strongest H-bond position.
+            # Check XH–π only here (extremely rare — H points at acceptor, not ring).
+            hbond_candidates = [best_hbond_pos]
+        else:
+            # No strong H-bond — H is free to rotate.
+            hbond_candidates = h_candidates_cone
+    else:
+        # C (methyl): C–H···O bonds are too weak (~1-2 kcal/mol) to be
+        # structurally decisive.  Treat all conformations as free.
+        hbond_candidates = h_candidates_cone
 
     if not hbond_candidates:
         return
