@@ -35,20 +35,32 @@ def _competition_score(
     dist_x_pi: float,
     angle_xh_pi: Optional[float],
 ) -> float:
-    """Compute a competition score comparing H-bond vs XH-π geometry fit.
+    """Compute a competition score comparing H-bond vs XH-π geometry quality.
 
     Positive → conventional H-bond is geometrically preferred.
     Negative → XH-π is geometrically preferred.
     Near zero → ambiguous.
+
+    Both terms are quality metrics (0–1 range, higher = better geometry).
     """
-    hbond_term = (d_ha / HBOND_HA_MAX) * (angle_dha / 180.0)
-    xh_pi_term = (dist_x_pi / 4.5)
+    hbond_term = (1.0 - d_ha / HBOND_HA_MAX) * (angle_dha / 180.0)
+    xh_pi_term = (1.0 - dist_x_pi / 4.5)
     if angle_xh_pi is not None:
         xh_pi_term *= (angle_xh_pi / 180.0)
     else:
         xh_pi_term *= 1.0
 
     return hbond_term - xh_pi_term
+
+
+def _hbond_quality(d_ha: float, angle_dha: float) -> float:
+    """Pure H-bond geometry quality score (0–1, higher = stronger H-bond).
+
+    Uses the same normalisation as _competition_score but does not
+    compare against XH–π — used for ranking H positions by H-bond
+    strength when the XH–π term is constant across positions.
+    """
+    return (1.0 - d_ha / HBOND_HA_MAX) * (angle_dha / 180.0)
 
 
 # ---------------------------------------------------------------------------

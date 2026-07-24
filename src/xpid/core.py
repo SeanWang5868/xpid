@@ -522,10 +522,9 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                 if angle_dha < 120.0:
                     continue
 
-                # competition_score with angle_xh_pi=None makes the XH–π term
-                # constant across H positions, so score ranks pure H-bond quality.
-                score = _hbond._competition_score(d_ha, angle_dha,
-                                                   dist_x_pi if dist_x_pi is not None else 4.5, None)
+                # _hbond_quality ranks pure H-bond strength (0–1).
+                # Shorter distance + larger angle → higher score.
+                score = _hbond._hbond_quality(d_ha, angle_dha)
 
                 if best_for_this_h is None or score > best_for_this_h[2]:
                     best_for_this_h = (d_ha, angle_dha, score)
@@ -535,7 +534,7 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                     best_overall_score = best_for_this_h[2]
                     best_hbond_pos = h_pos_np
 
-        if best_overall_score is not None and best_overall_score > 0.2:
+        if best_overall_score is not None and best_overall_score > 0.15:
             # H locked at the strongest H-bond position.
             # Check XH–π only here (extremely rare — H points at acceptor, not ring).
             hbond_candidates = [best_hbond_pos]
