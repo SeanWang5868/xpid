@@ -306,6 +306,11 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
 
         # --- Detection path ---
         if is_rotatable_donor and cone_mode == "auto" and not report_xh_candidates:
+            # Pre-filter: skip cone if even the closest possible H position
+            # (X shifted towards ring by bond length) exceeds the element cutoff.
+            _bond = config.BOND_LENGTHS.get(x_elem, 1.09)
+            if dist_x_centroid - _bond > max_plane_dist:
+                continue
             # Rotatable donor in auto mode: skip explicit-H track entirely.
             # Crystal-structure hydrogens on rotatable groups are riding
             # hydrogens with no experimental support at typical resolutions.
@@ -513,9 +518,12 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
     p_slab_best_score = None
     p_slab_best_h_pos = None
 
-    for h_pos_np in hbond_candidates:
-        metrics = systems._evaluate_systems(
-            rctx, x_elem, x_pos_arr, h_pos_np, dist_x_pi, dist_x_centroid, proj_dist)
+    h_pos_array = np.array(hbond_candidates)  # (N, 3)
+    batch_metrics = systems._evaluate_systems_batch(
+        rctx, x_elem, x_pos_arr, h_pos_array, dist_x_pi, dist_x_centroid, proj_dist)
+
+    for i, metrics in enumerate(batch_metrics):
+        h_pos_np = hbond_candidates[i]
 
         if metrics['is_hudson'] or metrics['is_plevin']:
             legacy_score = metrics['angle_XH_Pi'] if metrics['angle_XH_Pi'] is not None else -1.0
@@ -543,6 +551,5 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                     include_coordinates=include_coordinates,
                     sasa_map=sasa_map,
                     h_pos=selected_h_pos)
-
 
 

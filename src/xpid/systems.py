@@ -3,7 +3,7 @@ systems.py
 Geometric evaluation of Hudson, Plevin, and P-slab XH–π criteria.
 """
 import numpy as np
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from . import config
 from . import geometry
 
@@ -91,6 +91,98 @@ def _calculate_direction_metrics(rctx: "rings._RingContext", x_pos: np.ndarray, 
         'H_plane_entry_dist': h_plane_entry_dist,
         'delta_h_proj_dist': delta_h_proj_dist,
     }
+
+
+def _evaluate_systems_batch(rctx: "rings._RingContext", x_elem: str, x_pos: np.ndarray,
+                            h_positions: np.ndarray, dist_x_plane: Optional[float],
+                            dist_x_centroid: float, proj_dist: Optional[float]) -> List[Dict[str, Any]]:
+    """Vectorized batch version of _evaluate_systems for N H positions.
+
+    *h_positions* is an (N, 3) array.  Returns a list of N metric dicts.
+    xpcn_angle is pre-computed once (independent of H position).
+    """
+    n = h_positions.shape[0]
+    if n == 0:
+        return []
+
+    p_dmax = config.P_PLANE_DMAX.get(x_elem, config.P_PLANE_DMAX['default'])
+    pi_center = rctx.pi_center_arr
+    pi_normal = rctx.pi_normal
+
+    # --- Pre-compute: XPCN angle (same for all H) ---
+    xpcn_angle = geometry.calculate_xpcn_angle(x_pos, pi_center, pi_normal)
+
+    # --- Vectorized: Hudson theta ---
+    v_xh = h_positions - x_pos                     # (N, 3)
+    norm_xh = np.linalg.norm(v_xh, axis=1)         # (N,)
+    norm_n = np.linalg.norm(pi_normal)
+    hudson_cos = np.dot(v_xh, pi_normal) / (norm_xh * norm_n)  # (N,)
+    v_x_pi = pi_center - x_pos
+    dot_check = np.dot(v_xh, v_x_pi)               # (N,) — must be >0 for valid theta
+    theta_vals = np.full(n, np.nan)
+    mask = (norm_xh > 0) & (norm_n > 0) & (dot_check > 0)
+    theta_vals[mask] = np.degrees(np.arccos(np.clip(hudson_cos[mask], -1.0, 1.0)))
+    theta_vals[theta_vals >= 90] = 180 - theta_vals[theta_vals >= 90]
+
+    # --- Vectorized: XH_Pi angle ---
+    v_hc = pi_center - h_positions                 # (N, 3)
+    norm_hc = np.linalg.norm(v_hc, axis=1)         # (N,)
+    # D-H...centroid: angle between (X-H) and (H-centroid) — use -v_xh for XH direction
+    dot_xhpi = np.sum((-v_xh) * v_hc, axis=1)      # (N,)
+    xh_pi_vals = np.full(n, np.nan)
+    mask2 = (norm_xh > 0) & (norm_hc > 0)
+    cos_xhpi = dot_xhpi[mask2] / (norm_xh[mask2] * norm_hc[mask2])
+    xh_pi_vals[mask2] = np.degrees(np.arccos(np.clip(cos_xhpi, -1.0, 1.0)))
+
+    # --- Per-H: direction metrics (still loop, but fewer calls now) ---
+    results = []
+    hudson_dist_ok = int(dist_x_centroid <= p_dmax)
+    hudson_proj_ok = int(proj_dist is not None and proj_dist <= rctx.p_radius)
+    plevin_dist_ok = int(dist_x_centroid < p_dmax)
+    plevin_xpcn_ok = int(xpcn_angle is not None and xpcn_angle < config.PLEVIN_XPCN_MAX)
+    is_hudson_spatial = int(hudson_dist_ok and hudson_proj_ok)
+    is_plevin_spatial = int(plevin_dist_ok and plevin_xpcn_ok)
+
+    for i in range(n):
+        h_pos = h_positions[i]
+        theta = float(theta_vals[i]) if not np.isnan(theta_vals[i]) else None
+        xh_pi = float(xh_pi_vals[i]) if not np.isnan(xh_pi_vals[i]) else None
+
+        direction_metrics = _calculate_direction_metrics(rctx, x_pos, h_pos, proj_dist)
+
+        hudson_direction_ok = int(theta is not None and theta <= config.HUDSON_THETA_MAX)
+        plevin_direction_ok = int(xh_pi is not None and xh_pi >= config.PLEVIN_XH_PI_MIN)
+
+        is_hudson = int(is_hudson_spatial and hudson_direction_ok)
+        is_plevin = int(is_plevin_spatial and plevin_direction_ok)
+        is_p_slab = int(
+            dist_x_plane is not None and dist_x_plane <= p_dmax and
+            proj_dist is not None and proj_dist <= rctx.p_radius and
+            direction_metrics['h_proj_dist'] is not None and
+            direction_metrics['h_proj_dist'] <= rctx.p_radius
+        )
+
+        results.append({
+            'dist_X_centroid': dist_x_centroid,
+            'theta': theta,
+            'angle_XPCN': xpcn_angle,
+            'angle_XH_Pi': xh_pi,
+            'hudson_dist_ok': hudson_dist_ok,
+            'hudson_proj_ok': hudson_proj_ok,
+            'hudson_direction_ok': hudson_direction_ok,
+            'is_hudson_spatial': is_hudson_spatial,
+            'plevin_dist_ok': plevin_dist_ok,
+            'plevin_xpcn_ok': plevin_xpcn_ok,
+            'plevin_direction_ok': plevin_direction_ok,
+            'is_plevin_spatial': is_plevin_spatial,
+            'is_hudson': is_hudson,
+            'is_plevin': is_plevin,
+            'is_p_slab': is_p_slab,
+        })
+        results[-1].update(direction_metrics)
+
+    return results
+
 
 
 def _evaluate_systems(rctx: "rings._RingContext", x_elem: str, x_pos: np.ndarray, h_pos: np.ndarray,
