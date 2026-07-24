@@ -57,7 +57,7 @@ class TaskPacket(NamedTuple):
     filters: dict
     verbose: bool
     model_mode: str
-    use_cone: bool
+    cone_mode: str  # "auto" | "none"
     include_p_slab: bool
     report_xh_candidates: bool
     include_coordinates: bool
@@ -150,7 +150,7 @@ def process_one_file(task: TaskPacket):
             filter_donor=task.filters.get('donor'),
             filter_donor_atom=task.filters.get('donor_atom'),
             model_mode=task.model_mode,
-            use_cone=task.use_cone,
+            cone_mode=task.cone_mode,
             include_p_slab=task.include_p_slab,
             report_xh_candidates=task.report_xh_candidates,
             include_coordinates=task.include_coordinates,
@@ -226,10 +226,8 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Number of CPU cores to use.")
     proc.add_argument('--model', type=str, default="0",
                       help="Model index to analyze (or 'all').")
-    proc.add_argument('--cone', dest='use_cone', action='store_true', default=False,
-                      help="Enable implicit Cone logic for rotatable groups.")
-    proc.add_argument('--no-cone', dest='use_cone', action='store_false',
-                      help="Disable implicit Cone logic for rotatable groups (default).")
+    proc.add_argument('--no-cone', action="store_true",
+                      help="Disable cone rescue. Use explicit hydrogen positions only.")
     proc.add_argument('--include-p-slab', '--p-slab', dest='include_p_slab',
                       action='store_true', default=False,
                       help="Include the optional P-slab system and P-slab output columns.")
@@ -322,10 +320,8 @@ def main():
     }
 
     h_mode_desc = H_MODE_MAP.get(args.h_mode, "Unknown")
-    effective_use_cone = args.use_cone and not args.report_xh_candidates
-    cone_status = "Enabled" if effective_use_cone else "Disabled (default)"
-    if args.report_xh_candidates and args.use_cone:
-        logger.warning("[WARN] --cone is ignored in --xh-candidates mode to avoid virtual-H directionality bias.")
+    cone_mode = "none" if args.no_cone else "auto"
+    cone_status = "Auto (cone for rotatable)" if cone_mode == "auto" else "Disabled (explicit H only)"
     p_slab_status = "Included" if args.include_p_slab else "Excluded (default)"
     candidate_status = "Enabled" if args.report_xh_candidates else "Disabled (default)"
     coordinate_status = "Included" if args.include_coordinates else "Excluded (default)"
@@ -339,7 +335,7 @@ def main():
                 f"({'Separate Files' if args.separate else 'Merged File'})")
     logger.info(f"H-Mode      : {args.h_mode} ({h_mode_desc})")
     logger.info(f"Monomer Lib : {config.DEFAULT_MON_LIB_PATH}")
-    logger.info(f"Cone Logic  : {cone_status}")
+    logger.info(f"Cone Mode   : {cone_mode} ({cone_status})")
     logger.info(f"P-slab      : {p_slab_status}")
     logger.info(f"X-H Export  : {candidate_status}")
     logger.info(f"Coordinates : {coordinate_status}")
@@ -361,8 +357,8 @@ def main():
     ftype_arg = args.file_type.lower()
     tasks = [
         TaskPacket(f, ftype_arg, args.h_mode, str(output_dir),
-                   args.separate, filters, args.verbose, args.model, effective_use_cone,
-                   args.include_p_slab, args.report_xh_candidates,
+                   args.separate, filters, args.verbose, args.model,
+                   cone_mode, args.include_p_slab, args.report_xh_candidates,
                    args.include_coordinates,
                    args.sasa,
                    args.cooperativity,

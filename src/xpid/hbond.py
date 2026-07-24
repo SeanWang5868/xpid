@@ -192,6 +192,85 @@ def annotate_hbond_competition(
     return hits
 
 
+
+
+def annotate_rigid_hbond(hits: List[Dict[str, Any]], structure: gemmi.Structure,
+                         model_index: int = 0) -> List[Dict[str, Any]]:
+    """Annotate rigid-donor hits with a binary H-bond flag only.
+
+    For rigid donors (backbone N-H, Trp NE1, His, Arg, Asn/Gln sidechains),
+    the hydrogen cannot rotate, so there is no "competition" — it can
+    simultaneously participate in XH-π and a conventional H-bond.
+    This function only records whether a H-bond acceptor is present.
+    """
+    if len(structure) == 0 or model_index >= len(structure):
+        return hits
+
+    model = structure[model_index]
+    ns = gemmi.NeighborSearch(model, structure.cell, 5.0)
+    ns.populate(include_h=False)
+
+    for hit in hits:
+        # Exclude cone_virtual hits (they go through the competition path)
+        if hit.get("H_source") == "cone_virtual":
+            hit["hbond_also_hbonded"] = 0
+            continue
+
+        hx = hit.get("H_xyz_x")
+        hy = hit.get("H_xyz_y")
+        hz = hit.get("H_xyz_z")
+        if hx is None:
+            hit["hbond_also_hbonded"] = 0
+            continue
+
+        h_pos = gemmi.Position(hx, hy, hz)
+        xx = hit.get("X_xyz_x")
+        if xx is None:
+            hit["hbond_also_hbonded"] = 0
+            continue
+
+        x_pos_arr = np.array([xx, hit.get("X_xyz_y", 0), hit.get("X_xyz_z", 0)])
+        h_pos_arr = np.array([hx, hy, hz])
+
+        donor_chain = hit.get("X_chain", "")
+        donor_res = hit.get("X_res", "")
+        donor_id = str(hit.get("X_id", ""))
+
+        marks = ns.find_atoms(h_pos, radius=HBOND_SEARCH_RADIUS)
+        found = False
+
+        for mark in marks:
+            cra = mark.to_cra(model)
+            elem = cra.atom.element.name.upper()
+            if elem not in HBOND_ACCEPTOR_ELEMENTS:
+                continue
+            if (cra.chain.name == donor_chain and
+                cra.residue.name == donor_res and
+                str(cra.residue.seqid).strip() == donor_id):
+                continue
+
+            a_pos_arr = np.array([mark.pos.x, mark.pos.y, mark.pos.z])
+            d_ha = float(np.linalg.norm(a_pos_arr - h_pos_arr))
+            if d_ha > HBOND_HA_MAX:
+                continue
+
+            vec_hd = x_pos_arr - h_pos_arr
+            vec_ha = a_pos_arr - h_pos_arr
+            norm_hd = np.linalg.norm(vec_hd)
+            norm_ha = np.linalg.norm(vec_ha)
+            if norm_hd == 0 or norm_ha == 0:
+                continue
+
+            cos_angle = np.dot(vec_hd, vec_ha) / (norm_hd * norm_ha)
+            angle_dha = float(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
+            if angle_dha >= HBOND_DHA_MIN:
+                found = True
+                break
+
+        hit["hbond_also_hbonded"] = 1 if found else 0
+
+    return hits
+
 def _set_no_competition(hit: Dict[str, Any]) -> None:
     """Fill competition columns with fallback values."""
     hit["hbond_competing"] = 0

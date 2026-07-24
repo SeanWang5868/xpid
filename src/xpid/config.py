@@ -197,28 +197,16 @@ ROTATABLE_MAPPING: Dict[str, Dict[str, str]] = {
     'LYS': {'NZ': 'CE'}
 }
 
-# Flexible donors: low rotational barrier (~1-2 kcal/mol), continuous 360° scan
-FLEXIBLE_DONORS = {'OG', 'OG1', 'OH', 'SG'}
 
-# Rigid rotors: high three-fold torsional barrier (~3 kcal/mol), discrete staggered states
-RIGID_DONORS = {'CB', 'CG1', 'CG2', 'CD1', 'CD2', 'CE', 'NZ'} 
+def is_rotatable(res_name: str, atom_name: str) -> bool:
+    """Return True if the donor atom belongs to a rotatable group.
 
-# Grandparent atom mapping: defines the reference plane for computing
-# staggered rotamer positions of methyl / ammonium groups.
-GRANDPARENT_MAPPING: Dict[str, Dict[str, str]] = {
-    'ALA': {'CB': 'N'},
-    'VAL': {'CG1': 'CA', 'CG2': 'CA'},
-    'LEU': {'CD1': 'CB', 'CD2': 'CB'},
-    'ILE': {'CD1': 'CB', 'CG2': 'CA'},
-    'MET': {'CE': 'CG'},
-    'MSE': {'CE': 'CG'},
-    'THR': {'CG2': 'CA', 'OG1': 'CA'},
-    'SER': {'OG': 'CA'},
-    'TYR': {'OH': 'CE1'},
-    'CYS': {'SG': 'CA'},
-    'LYS': {'NZ': 'CD'}
-}
-
+    Rotatable groups (OH, SH, CH₃, NH₃⁺) have free internal rotation
+    in solution at room temperature.  Their hydrogen positions in crystal
+    structures are riding hydrogens placed by the refinement program and
+    do not reflect the true conformational ensemble.
+    """
+    return atom_name.upper() in ROTATABLE_MAPPING.get(res_name.upper(), {})
 
 BOND_LENGTHS = {
     'C': 1.09, 

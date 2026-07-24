@@ -190,41 +190,6 @@ def calculate_projection_dist(normal: np.ndarray, pi_center: np.ndarray, x_pos: 
         return None
     return calculate_p_offset(projection_point, pi_center)
 
-def check_hbond_locked(x_pos: np.ndarray, 
-                       orig_h_positions: list, 
-                       acceptor_coords: np.ndarray, 
-                       dist_cutoff: float = 3.5, 
-                       angle_cutoff_deg: float = 120.0) -> bool:
-    """Check if a donor's polar hydrogen is locked by a strong hydrogen bond.
-
-    Returns True if any D-H...A angle >= 120° and H...A distance <= 3.5 Å.
-    """
-    if len(acceptor_coords) == 0 or len(orig_h_positions) == 0:
-        return False
-        
-    for h_pos in orig_h_positions:
-        vec_xh = h_pos - x_pos
-        norm_xh = np.linalg.norm(vec_xh)
-        if norm_xh == 0: continue
-        vec_xh_norm = vec_xh / norm_xh
-        
-        # Compute distances from H to all potential acceptors
-        dists = np.linalg.norm(acceptor_coords - h_pos, axis=1)
-        valid_acceptors = acceptor_coords[dists <= dist_cutoff]
-        
-        for acc in valid_acceptors:
-            vec_ha = acc - h_pos
-            norm_ha = np.linalg.norm(vec_ha)
-            if norm_ha == 0: continue
-            
-            # D-H...A angle via dot product
-            cos_theta = np.dot(-vec_xh_norm, vec_ha / norm_ha)
-            angle = np.degrees(np.arccos(np.clip(cos_theta, -1.0, 1.0)))
-            
-            if angle >= angle_cutoff_deg:
-                return True  # Locked by a strong hydrogen bond
-                
-    return False
 
 def generate_rotated_hydrogens(parent_pos: np.ndarray, 
                                x_pos: np.ndarray, 

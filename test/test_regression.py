@@ -1,3 +1,6 @@
+import pytest
+pytestmark = pytest.mark.slow
+
 """Regression tests on real PDB structure 5FJJ.
 
 These tests detect changes in Xpid's detection behaviour by checking

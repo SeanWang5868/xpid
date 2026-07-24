@@ -86,15 +86,15 @@ def test_donor_atom_filter_accepts_element_symbols():
     st = _structure_with_phe_and_og()
 
     oxygen_hits = core.detect_interactions_in_structure(
-        st, "test", filter_donor_atom=["O"])
+        st, "test", cone_mode="none", filter_donor_atom=["O"])
     assert any(hit["X_atom"] == "OG" for hit in oxygen_hits)
 
     atom_name_hits = core.detect_interactions_in_structure(
-        _structure_with_phe_and_og(), "test", filter_donor_atom=["OG"])
+        _structure_with_phe_and_og(), "test", cone_mode="none", filter_donor_atom=["OG"])
     assert any(hit["X_atom"] == "OG" for hit in atom_name_hits)
 
     nitrogen_hits = core.detect_interactions_in_structure(
-        _structure_with_phe_and_og(), "test", filter_donor_atom=["N"])
+        _structure_with_phe_and_og(), "test", cone_mode="none", filter_donor_atom=["N"])
     assert nitrogen_hits == []
 
 
@@ -102,23 +102,23 @@ def test_api_and_core_default_disable_cone_and_p_slab():
     api_sig = inspect.signature(detect)
     core_sig = inspect.signature(core.detect_interactions_in_structure)
 
-    assert api_sig.parameters["use_cone"].default is False
+    assert api_sig.parameters["cone_mode"].default == "auto"
     assert api_sig.parameters["include_p_slab"].default is False
     assert api_sig.parameters["report_xh_candidates"].default is False
     assert api_sig.parameters["include_coordinates"].default is False
     assert api_sig.parameters["residue_pair"].default is None
-    assert core_sig.parameters["use_cone"].default is False
+    assert core_sig.parameters["cone_mode"].default == "auto"
     assert core_sig.parameters["include_p_slab"].default is False
     assert core_sig.parameters["report_xh_candidates"].default is False
     assert core_sig.parameters["include_coordinates"].default is False
     assert core_sig.parameters["residue_pair"].default is None
 
 
-def test_cli_parser_default_disables_cone_and_p_slab():
+def test_cli_parser_default_cone_auto_and_p_slab_off():
     parser = cli._build_parser()
     args = parser.parse_args(["dummy.cif"])
 
-    assert args.use_cone is False
+    assert args.no_cone is False
     assert args.include_p_slab is False
     assert args.report_xh_candidates is False
     assert args.include_coordinates is False
@@ -254,7 +254,7 @@ def test_cation_pi_donors_are_excluded_from_core_detection():
     lys.add_atom(_atom("HZ1", "H", (0.0, 0.0, 2.0)))
     chain.add_residue(lys)
 
-    assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+    assert core.detect_interactions_in_structure(st, "test", cone_mode="none") == []
 
 
 def test_residue_pair_filter_keeps_only_selected_inter_residue_contacts():
@@ -267,11 +267,11 @@ def test_residue_pair_filter_keeps_only_selected_inter_residue_contacts():
     ser.add_atom(_atom("HG", "H", (0.5, 0.0, 2.0)))
     chain.add_residue(ser)
 
-    all_hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+    all_hits = core.detect_interactions_in_structure(st, "test", cone_mode="none")
     assert {hit["X_id"].strip() for hit in all_hits} == {"2", "3"}
 
     pair_hits = core.detect_interactions_in_structure(
-        _structure_with_phe_and_og(), "test", use_cone=False,
+        _structure_with_phe_and_og(), "test", cone_mode="none",
         residue_pair=("//A/1", "//A/2"))
     assert len(pair_hits) == 1
     assert pair_hits[0]["pi_id"].strip() == "1"
@@ -280,7 +280,7 @@ def test_residue_pair_filter_keeps_only_selected_inter_residue_contacts():
 
 def test_residue_pair_filter_is_direction_agnostic():
     hits = core.detect_interactions_in_structure(
-        _structure_with_phe_and_og(), "test", use_cone=False,
+        _structure_with_phe_and_og(), "test", cone_mode="none",
         residue_pair=("//A/2", "//A/1"))
 
     assert len(hits) == 1
@@ -290,7 +290,7 @@ def test_residue_pair_filter_is_direction_agnostic():
 
 def test_residue_pair_filter_returns_empty_for_unmatched_pair():
     hits = core.detect_interactions_in_structure(
-        _structure_with_phe_and_og(), "test", use_cone=False,
+        _structure_with_phe_and_og(), "test", cone_mode="none",
         residue_pair=("//A/1", "//A/99"))
 
     assert hits == []
@@ -325,7 +325,7 @@ def test_residue_pair_filter_respects_chain_in_selection():
     model.add_chain(chain_b)
 
     hits = core.detect_interactions_in_structure(
-        st, "test", use_cone=False, residue_pair=("//A/1", "//A/2"))
+        st, "test", cone_mode="none", residue_pair=("//A/1", "//A/2"))
 
     assert len(hits) == 1
     assert hits[0]["pi_chain"] == "A"
@@ -376,7 +376,7 @@ def test_lower_occupancy_altloc_can_contribute_interaction():
     ser.add_atom(_atom("HG", "H", (0.0, 0.0, 2.0), occ=0.2, altloc="B"))
     chain.add_residue(ser)
 
-    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+    hits = core.detect_interactions_in_structure(st, "test", cone_mode="none")
 
     assert len(hits) == 1
     assert hits[0]["X_atom"] == "OG"
@@ -397,7 +397,7 @@ def test_duplicate_altloc_hits_are_collapsed_to_best_occupancy():
     ser.add_atom(_atom("HG", "H", (0.0, 0.0, 2.1), occ=0.3, altloc="B"))
     chain.add_residue(ser)
 
-    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+    hits = core.detect_interactions_in_structure(st, "test", cone_mode="none")
 
     assert len(hits) == 1
     assert hits[0]["dist_X_Pi"] == 3.0
@@ -414,7 +414,7 @@ def test_p_model_uses_plane_distance_not_centroid_distance():
     chain.add_residue(ser)
 
     hits = core.detect_interactions_in_structure(
-        st, "test", use_cone=False, include_p_slab=True)
+        st, "test", cone_mode="none", include_p_slab=True)
 
     assert len(hits) == 1
     assert hits[0]["dist_X_Pi"] == 4.0
@@ -437,7 +437,7 @@ def test_p_model_rejects_h_ray_that_misses_p():
     chain.add_residue(ser)
 
     assert core.detect_interactions_in_structure(
-        st, "test", use_cone=False, include_p_slab=True) == []
+        st, "test", cone_mode="none", include_p_slab=True) == []
 
 
 def test_p_model_rejects_x_projection_outside_p():
@@ -451,7 +451,7 @@ def test_p_model_rejects_x_projection_outside_p():
     chain.add_residue(ser)
 
     assert core.detect_interactions_in_structure(
-        st, "test", use_cone=False, include_p_slab=True) == []
+        st, "test", cone_mode="none", include_p_slab=True) == []
 
 
 def test_p_model_is_disabled_by_default():
@@ -464,7 +464,7 @@ def test_p_model_is_disabled_by_default():
     ser.add_atom(_atom("HG", "H", (1.9, 0.0, 3.0)))
     chain.add_residue(ser)
 
-    assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+    assert core.detect_interactions_in_structure(st, "test", cone_mode="none") == []
 
 
 def test_xh_candidate_mode_reports_direction_failed_spatial_candidate():
@@ -477,10 +477,10 @@ def test_xh_candidate_mode_reports_direction_failed_spatial_candidate():
     ser.add_atom(_atom("HG", "H", (0.0, 0.0, 4.0)))
     chain.add_residue(ser)
 
-    assert core.detect_interactions_in_structure(st, "test", use_cone=False) == []
+    assert core.detect_interactions_in_structure(st, "test", cone_mode="none") == []
 
     hits = core.detect_interactions_in_structure(
-        st, "test", use_cone=False, report_xh_candidates=True)
+        st, "test", cone_mode="none", report_xh_candidates=True)
 
     assert len(hits) == 1
     hit = hits[0]
@@ -500,7 +500,7 @@ def test_xh_candidate_mode_reports_direction_failed_spatial_candidate():
 
 def test_xh_candidate_mode_keeps_positive_labels_and_ray_geometry():
     hits = core.detect_interactions_in_structure(
-        _structure_with_phe_and_og(), "test", use_cone=False, report_xh_candidates=True)
+        _structure_with_phe_and_og(), "test", cone_mode="none", report_xh_candidates=True)
 
     assert len(hits) == 1
     hit = hits[0]
@@ -527,7 +527,7 @@ def test_xh_candidate_mode_ignores_cone_virtual_hydrogens():
     chain.add_residue(ser)
 
     assert core.detect_interactions_in_structure(
-        st, "test", use_cone=True, report_xh_candidates=True) == []
+        st, "test", cone_mode="auto", report_xh_candidates=True) == []
 
 
 def test_p_slab_accepts_near_edge_directional_ray():
@@ -541,7 +541,7 @@ def test_p_slab_accepts_near_edge_directional_ray():
     chain.add_residue(ser)
 
     hits = core.detect_interactions_in_structure(
-        st, "test", use_cone=False, include_p_slab=True)
+        st, "test", cone_mode="none", include_p_slab=True)
 
     assert len(hits) == 1
     assert hits[0]["proj_dist"] == 0.83
@@ -560,7 +560,7 @@ def test_legacy_hudson_hit_is_retained_when_p_slab_fails():
     ser.add_atom(_atom("HG", "H", (2.4, 0.0, 2.134)))
     chain.add_residue(ser)
 
-    hits = core.detect_interactions_in_structure(st, "test", use_cone=False)
+    hits = core.detect_interactions_in_structure(st, "test", cone_mode="none")
 
     assert len(hits) == 1
     assert hits[0]["is_hudson"] == 1
@@ -569,7 +569,7 @@ def test_legacy_hudson_hit_is_retained_when_p_slab_fails():
 
 def test_coordinate_output_includes_h_xyz_pi_normal_and_x_side():
     hits = core.detect_interactions_in_structure(
-        _structure_with_phe_and_og(), "test", use_cone=False,
+        _structure_with_phe_and_og(), "test", cone_mode="none",
         include_coordinates=True)
 
     assert len(hits) == 1
