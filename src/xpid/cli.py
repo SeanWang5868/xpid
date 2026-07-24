@@ -58,6 +58,7 @@ class TaskPacket(NamedTuple):
     verbose: bool
     model_mode: str
     cone_mode: str  # "auto" | "none"
+    no_hbond_gate: bool
     include_p_slab: bool
     report_xh_candidates: bool
     include_coordinates: bool
@@ -151,6 +152,7 @@ def process_one_file(task: TaskPacket):
             filter_donor_atom=task.filters.get('donor_atom'),
             model_mode=task.model_mode,
             cone_mode=task.cone_mode,
+            no_hbond_gate=task.no_hbond_gate,
             include_p_slab=task.include_p_slab,
             report_xh_candidates=task.report_xh_candidates,
             include_coordinates=task.include_coordinates,
@@ -228,6 +230,8 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Model index to analyze (or 'all').")
     proc.add_argument('--no-cone', action="store_true",
                       help="Disable cone rescue. Use explicit hydrogen positions only.")
+    proc.add_argument('--no-hbond-gate', action="store_true",
+                      help="Disable H-bond competition gate in cone rescue. All sterically-valid conformers are evaluated.")
     proc.add_argument('--include-p-slab', '--p-slab', dest='include_p_slab',
                       action='store_true', default=False,
                       help="Include the optional P-slab system and P-slab output columns.")

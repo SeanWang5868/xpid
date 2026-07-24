@@ -102,7 +102,8 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                      external_ss_index: Optional[Dict] = None,
                                      sym_contacts: bool = False,
                                      include_water: bool = False,
-                                     max_b: float = 0.0, compute_sasa: bool = False, annotate_cooperativity: bool = True) -> List[Dict[str, Any]]:
+                                     max_b: float = 0.0, compute_sasa: bool = False, annotate_cooperativity: bool = True,
+                                     no_hbond_gate: bool = False) -> List[Dict[str, Any]]:
     results = []
     if not structure or len(structure) == 0: return []
 
@@ -164,6 +165,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                         results.extend(_detect_residue(
                             pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
                             pi_atoms, pi_alt, mode, filter_donor, filter_donor_atom, cone_mode,
+                            no_hbond_gate,
                             include_p_slab, report_xh_candidates, include_coordinates,
                             pair_keys, ring_size, sasa_map, min_occ,
                             sym_contacts=sym_contacts, max_b=max_b
@@ -208,6 +210,7 @@ def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.Neighbor
 def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
                     pi_atoms: List[gemmi.Atom], pi_alt: str, mode: str, filter_donor: Optional[List[str]],
                     filter_donor_atom: Optional[List[str]], cone_mode: str,
+                    no_hbond_gate: bool,
                     include_p_slab: bool, report_xh_candidates: bool,
                     include_coordinates: bool, pair_keys: ResiduePairKeys,
                     ring_size: int, sasa_map: Dict,
@@ -319,7 +322,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
                 rctx, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
                 x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
                 combined_occ, sym_op, include_p_slab, include_coordinates,
-                sasa_map, hits, report_xh_candidates
+                sasa_map, hits, report_xh_candidates, no_hbond_gate
             )
         else:
             # Rigid donor, or rotatable in --no-cone mode:
@@ -408,7 +411,8 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                     x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
                     combined_occ, sym_op, include_p_slab: bool,
                     include_coordinates: bool, sasa_map: Dict, hits,
-                    report_xh_candidates: bool = False):
+                    report_xh_candidates: bool = False,
+                    no_hbond_gate: bool = False):
     """Cone rescue: scan full rotational space for rotatable donors.
 
     Generates 72 virtual hydrogen positions around the X–parent bond axis,
@@ -470,42 +474,45 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
         return
 
     # --- H-bond competition gate ---
-    # Filter out conformers where the H would be captured by a nearby acceptor.
-    # Reuses the existing NeighborSearch (rctx.ns) instead of building a new one.
-    from . import hbond as _hbond
     hbond_candidates = []
+    if no_hbond_gate:
+        hbond_candidates = list(h_candidates_cone)
+    else:
+        # Filter out conformers where the H would be captured by a nearby acceptor.
+        # Reuses the existing NeighborSearch (rctx.ns) instead of building a new one.
+        from . import hbond as _hbond
 
-    for h_pos_np in h_candidates_cone:
-        h_pos_gemmi = gemmi.Position(h_pos_np[0], h_pos_np[1], h_pos_np[2])
-        blocked = False
-        for a_mark in rctx.ns.find_atoms(h_pos_gemmi, radius=3.0):
-            a_cra = a_mark.to_cra(rctx.model)
-            a_elem = a_cra.atom.element.name.upper()
-            if a_elem not in ('O', 'N', 'S'):
-                continue
-            if (a_cra.chain.name == x_cra.chain.name and
-                a_cra.residue.seqid == x_res.seqid):
-                continue
-            a_pos_arr = _pos_to_arr(a_mark.pos)
-            d_ha = float(np.linalg.norm(a_pos_arr - h_pos_np))
-            if d_ha > 2.8:
-                continue
-            vec_hd = x_pos_arr - h_pos_np
-            vec_ha = a_pos_arr - h_pos_np
-            norm_hd = np.linalg.norm(vec_hd)
-            norm_ha = np.linalg.norm(vec_ha)
-            if norm_hd == 0 or norm_ha == 0:
-                continue
-            cos_angle = np.dot(vec_hd, vec_ha) / (norm_hd * norm_ha)
-            angle_dha = float(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
-            if angle_dha < 120.0:
-                continue
-            score = _hbond._competition_score(d_ha, angle_dha, dist_x_pi if dist_x_pi is not None else 4.5, None)
-            if score > 0.2:
-                blocked = True
-                break
-        if not blocked:
-            hbond_candidates.append(h_pos_np)
+        for h_pos_np in h_candidates_cone:
+            h_pos_gemmi = gemmi.Position(h_pos_np[0], h_pos_np[1], h_pos_np[2])
+            blocked = False
+            for a_mark in rctx.ns.find_atoms(h_pos_gemmi, radius=3.0):
+                a_cra = a_mark.to_cra(rctx.model)
+                a_elem = a_cra.atom.element.name.upper()
+                if a_elem not in ('O', 'N', 'S'):
+                    continue
+                if (a_cra.chain.name == x_cra.chain.name and
+                    a_cra.residue.seqid == x_res.seqid):
+                    continue
+                a_pos_arr = _pos_to_arr(a_mark.pos)
+                d_ha = float(np.linalg.norm(a_pos_arr - h_pos_np))
+                if d_ha > 2.8:
+                    continue
+                vec_hd = x_pos_arr - h_pos_np
+                vec_ha = a_pos_arr - h_pos_np
+                norm_hd = np.linalg.norm(vec_hd)
+                norm_ha = np.linalg.norm(vec_ha)
+                if norm_hd == 0 or norm_ha == 0:
+                    continue
+                cos_angle = np.dot(vec_hd, vec_ha) / (norm_hd * norm_ha)
+                angle_dha = float(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
+                if angle_dha < 120.0:
+                    continue
+                score = _hbond._competition_score(d_ha, angle_dha, dist_x_pi if dist_x_pi is not None else 4.5, None)
+                if score > 0.2:
+                    blocked = True
+                    break
+            if not blocked:
+                hbond_candidates.append(h_pos_np)
 
     if not hbond_candidates:
         return
@@ -551,5 +558,4 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                     include_coordinates=include_coordinates,
                     sasa_map=sasa_map,
                     h_pos=selected_h_pos)
-
 
