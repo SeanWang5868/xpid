@@ -308,7 +308,12 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         sym_op = x_mark.image_idx if is_sym_mate else 0
 
         # --- Detection path ---
-        if is_rotatable_donor and cone_mode == "auto" and not report_xh_candidates:
+        if is_rotatable_donor and cone_mode == "auto":
+            # In candidates mode, methyl donors have no reliable H direction
+            # (C–H bonds are too weak to lock H via H-bond gate).
+            if report_xh_candidates and x_elem not in ('O', 'N', 'S'):
+                continue
+
             # Pre-filter: skip cone if even the closest possible H position
             # (X shifted towards ring by bond length) exceeds the element cutoff.
             _bond = config.BOND_LENGTHS.get(x_elem, 1.09)
@@ -545,6 +550,11 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
     if not hbond_candidates:
         return
 
+    # In candidates mode, only export if H was locked at a strong H-bond.
+    # Free H (multiple positions) means no reliable direction → skip.
+    if report_xh_candidates and len(hbond_candidates) != 1:
+        return
+
     # --- Geometric evaluation on surviving conformers ---
     legacy_best = None
     legacy_best_score = None
@@ -583,6 +593,7 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                     dist_x_centroid, x_pos_arr, proj_dist, combined,
                     is_cone=True, combined_occ=combined_occ, sym_op=sym_op,
                     h_atom=None, include_p_slab=include_p_slab,
+                    include_candidate_metrics=report_xh_candidates,
                     include_coordinates=include_coordinates,
                     sasa_map=sasa_map,
                     h_pos=selected_h_pos)
