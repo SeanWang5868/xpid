@@ -363,7 +363,7 @@ def main():
     tasks = [
         TaskPacket(f, ftype_arg, args.h_mode, str(output_dir),
                    args.separate, filters, args.verbose, args.model,
-                   cone_mode, args.include_p_slab, args.report_xh_candidates,
+                   cone_mode, args.no_hbond_gate, args.include_p_slab, args.report_xh_candidates,
                    args.include_coordinates,
                    args.sasa,
                    args.cooperativity,
