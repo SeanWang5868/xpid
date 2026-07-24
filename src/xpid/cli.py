@@ -350,7 +350,8 @@ def main():
     if args.provenance:
         meta = provenance.build_metadata(args, output_dir, args.output_name, len(files))
         provenance.write_metadata(meta, output_dir, args.output_name)
-        logger.info(f"[PROVENANCE] Written to {output_dir / (args.output_name + "_metadata.json")}")
+        _meta_path = output_dir / f"{args.output_name}_metadata.json"
+        logger.info(f"[PROVENANCE] Written to {_meta_path}")
     print("")
 
     # Step 3: Execute
