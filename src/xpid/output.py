@@ -180,12 +180,6 @@ class ResultStreamer:
         if self.include_p_slab:
             cols = BASE_SIMPLE_COLS[:11] + P_SLAB_SIMPLE_COLS[:1] + BASE_SIMPLE_COLS[11:] + P_SLAB_SIMPLE_COLS[1:]
             return with_coordinates(cols)
-        if self.include_sasa:
-            cols = cols + SASA_SIMPLE_COLS
-        if self.include_cooperativity:
-            cols = cols + COOP_SIMPLE_COLS
-        if self.include_hbond_comp:
-            cols = cols + HBOND_SIMPLE_COLS
         cols = list(BASE_SIMPLE_COLS)
         if self.include_sasa:
             cols.extend(SASA_SIMPLE_COLS)
@@ -193,7 +187,7 @@ class ResultStreamer:
             cols.extend(COOP_SIMPLE_COLS)
         if self.verbose:
             cols.extend(HBOND_SIMPLE_COLS)
-        return with_coordinates(BASE_SIMPLE_COLS)
+        return with_coordinates(cols)
 
     def _headers(self, first_result: Dict[str, Any]):
         if not self.verbose:
