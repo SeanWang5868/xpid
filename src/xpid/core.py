@@ -13,6 +13,9 @@ from . import config
 from . import geometry
 from . import sasa
 from . import cooperativity
+from . import cone
+from . import donors
+from . import acceptors
 from . import hbond
 from . import rings
 from . import systems
@@ -271,8 +274,8 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         if _is_cation_pi_donor(x_res_name, x_atom.name):
             continue
         
-        # Classify donor: rotatable vs rigid
-        is_rotatable_donor = config.is_rotatable(x_res_name, x_atom.name)
+        donor_definition = donors.get_definition(x_res_name, x_atom.name)
+        is_rotatable_donor = donor_definition is not None
 
         if is_sym_mate:
             if _is_donor_blocked(x_atom, model, ns, x_pos=x_mark.pos):
@@ -295,15 +298,35 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
             x_pos_arr = _pos_to_arr(x_atom.pos)
         dist_x_pi = geometry.calculate_plane_distance(x_pos_arr, pi_center_arr, pi_normal)
         dist_x_centroid = geometry.calculate_distance(x_pos_arr, pi_center_arr)
+        proj_dist = geometry.calculate_projection_dist(
+            pi_normal, pi_center_arr, x_pos_arr)
 
         max_plane_dist = config.P_PLANE_DMAX.get(x_elem, config.P_PLANE_DMAX['default'])
 
-        if dist_x_centroid > max_plane_dist and (
-            dist_x_pi is None or dist_x_pi > max_plane_dist
-        ):
+        xpcn_angle = geometry.calculate_xpcn_angle(
+            x_pos_arr, pi_center_arr, pi_normal)
+        hudson_spatial = (
+            dist_x_centroid <= max_plane_dist and
+            proj_dist is not None and proj_dist <= p_radius
+        )
+        plevin_spatial = (
+            dist_x_centroid < max_plane_dist and
+            xpcn_angle is not None and xpcn_angle < config.PLEVIN_XPCN_MAX
+        )
+        p_slab_spatial = (
+            include_p_slab and dist_x_pi is not None and
+            dist_x_pi <= max_plane_dist
+        )
+        if not (hudson_spatial or plevin_spatial or p_slab_spatial):
             continue
 
-        proj_dist = geometry.calculate_projection_dist(pi_normal, pi_center_arr, x_pos_arr)
+        p_slab_spatial = (
+            include_p_slab and dist_x_pi is not None and
+            dist_x_pi <= max_plane_dist and
+            proj_dist is not None and proj_dist <= p_radius
+        )
+        if not (hudson_spatial or plevin_spatial or p_slab_spatial):
+            continue
         
         sym_op = x_mark.image_idx if is_sym_mate else 0
 
@@ -314,11 +337,6 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
             if report_xh_candidates and x_elem not in ('O', 'N', 'S'):
                 continue
 
-            # Pre-filter: skip cone if even the closest possible H position
-            # (X shifted towards ring by bond length) exceeds the element cutoff.
-            _bond = config.BOND_LENGTHS.get(x_elem, 1.09)
-            if dist_x_centroid - _bond > max_plane_dist:
-                continue
             # Rotatable donor in auto mode: skip explicit-H track entirely.
             # Crystal-structure hydrogens on rotatable groups are riding
             # hydrogens with no experimental support at typical resolutions.
@@ -327,7 +345,8 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
                 rctx, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
                 x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
                 combined_occ, sym_op, include_p_slab, include_coordinates,
-                sasa_map, hits, report_xh_candidates, no_hbond_gate
+                sasa_map, hits, report_xh_candidates, no_hbond_gate,
+                donor_definition
             )
         else:
             # Rigid donor, or rotatable in --no-cone mode:
@@ -417,17 +436,16 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                     combined_occ, sym_op, include_p_slab: bool,
                     include_coordinates: bool, sasa_map: Dict, hits,
                     report_xh_candidates: bool = False,
-                    no_hbond_gate: bool = False):
-    """Cone rescue: scan full rotational space for rotatable donors.
-
-    Generates 72 virtual hydrogen positions around the X–parent bond axis,
-    filters by steric clash and H-bond competition, then evaluates
-    Hudson/Plevin/P-slab geometry on surviving conformers.
-    """
-    parent_name = config.ROTATABLE_MAPPING[x_res_name].get(x_atom.name)
-    if not parent_name:
+                    no_hbond_gate: bool = False,
+                    donor_definition: Optional[donors.DonorDefinition] = None):
+    """Evaluate a chemically complete binary cone for a rotatable donor."""
+    if donor_definition is None:
+        donor_definition = donors.get_definition(x_res_name, x_atom.name)
+    if donor_definition is None:
         return
-    parent_atom = next((a for a in x_res if a.name == parent_name), None)
+
+    parent_name = donor_definition.parent_atom_name
+    parent_atom = donors.parent_atom(x_res, donor_definition)
     if not parent_atom:
         return
 
@@ -448,152 +466,51 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
     else:
         parent_pos_arr = _pos_to_arr(parent_atom.pos)
 
-    # Gather environment atoms for steric clash check
+    # Gather a model/image/altloc-compatible heavy-atom environment.  Only the
+    # donor X and its directly bonded parent are excluded; other same-residue
+    # atoms remain capable of causing a real non-bonded clash.
     cone_search_pos = gemmi.Position(x_pos_arr[0], x_pos_arr[1], x_pos_arr[2])
     neighbors = rctx.ns.find_atoms(cone_search_pos, radius=4.0)
-
-    env_coords_list = []
+    environment = []
     for n_mark in neighbors:
-        if n_mark.pos.dist(cone_search_pos) < 0.01:
-            continue
         n_cra = n_mark.to_cra(rctx.model)
-        if n_cra.residue.seqid == x_res.seqid and n_cra.chain.name == x_cra.chain.name:
-            continue
         n_elem = n_cra.atom.element.name.upper()
         if n_elem in ('H', 'D', ''):
             continue
-        n_pos_arr = _pos_to_arr(n_mark.pos)
-        dist = np.linalg.norm(n_pos_arr - x_pos_arr)
-        if dist <= 4.0:
-            env_coords_list.append(n_pos_arr)
+        same_residue = (
+            n_cra.chain.name == x_cra.chain.name and
+            n_cra.residue.seqid == x_res.seqid
+        )
+        same_image = n_mark.image_idx == x_mark.image_idx
+        if same_residue and same_image and n_cra.atom.name in {
+                x_atom.name, parent_name}:
+            continue
+        if not acceptors.altlocs_compatible(x_atom.altloc, n_cra.atom.altloc):
+            continue
+        environment.append(cone.EnvironmentAtom(
+            _pos_to_arr(n_mark.pos), n_cra.atom, n_cra.residue,
+            n_cra.chain.name, n_mark.image_idx,
+        ))
 
-    env_coords = np.array(env_coords_list) if env_coords_list else np.empty((0, 3))
-
-    # Generate 72 virtual H positions around parent→X axis (full 360°)
-    h_candidates_cone = geometry.generate_rotated_hydrogens(
-        parent_pos_arr, x_pos_arr, x_elem,
-        env_coords=env_coords, clash_cutoff=2.0, num_samples=72
+    evidence = cone.evaluate_binary(
+        rctx, donor_definition, parent_pos_arr, x_pos_arr, x_elem,
+        environment, dist_x_pi, dist_x_centroid, proj_dist,
+        include_p_slab=include_p_slab,
+        disable_hbond_constraint=no_hbond_gate,
     )
-
-    if not h_candidates_cone:
-        return
-
-    # --- H-bond competition gate ---
-    hbond_candidates = []
-
-    if no_hbond_gate:
-        hbond_candidates = list(h_candidates_cone)
-    elif x_elem in ('O', 'N', 'S'):
-        # Polar donor (OH, NH₃⁺, SH): find the strongest H-bond acceptor
-        # across all conformations.  If strong enough, lock H at that
-        # position.  Only that single position is evaluated for XH–π.
-        from . import hbond as _hbond
-
-        best_overall_score = None
-        best_hbond_pos = None
-
-        for h_pos_np in h_candidates_cone:
-            h_pos_gemmi = gemmi.Position(h_pos_np[0], h_pos_np[1], h_pos_np[2])
-            best_for_this_h = None  # (d_ha, angle_dha, score)
-
-            for a_mark in rctx.ns.find_atoms(h_pos_gemmi, radius=3.0):
-                a_cra = a_mark.to_cra(rctx.model)
-                a_elem = a_cra.atom.element.name.upper()
-                if a_elem not in ('O', 'N', 'S'):
-                    continue
-                if (a_cra.chain.name == x_cra.chain.name and
-                    a_cra.residue.seqid == x_res.seqid):
-                    continue
-
-                a_pos_arr = _pos_to_arr(a_mark.pos)
-                d_ha = float(np.linalg.norm(a_pos_arr - h_pos_np))
-                if d_ha > 2.8:
-                    continue
-
-                vec_hd = x_pos_arr - h_pos_np
-                vec_ha = a_pos_arr - h_pos_np
-                norm_hd = np.linalg.norm(vec_hd)
-                norm_ha = np.linalg.norm(vec_ha)
-                if norm_hd == 0 or norm_ha == 0:
-                    continue
-
-                cos_angle = np.dot(vec_hd, vec_ha) / (norm_hd * norm_ha)
-                angle_dha = float(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
-                if angle_dha < 120.0:
-                    continue
-
-                # Pure H-bond quality score (0–1).
-                # Shorter distance + larger angle → higher score.
-                score = _hbond._competition_score(d_ha, angle_dha)
-
-                if best_for_this_h is None or score > best_for_this_h[2]:
-                    best_for_this_h = (d_ha, angle_dha, score)
-
-            if best_for_this_h is not None:
-                if best_overall_score is None or best_for_this_h[2] > best_overall_score:
-                    best_overall_score = best_for_this_h[2]
-                    best_hbond_pos = h_pos_np
-
-        if best_overall_score is not None and best_overall_score > 0.15:
-            # H locked at the strongest H-bond position.
-            # Check XH–π only here (extremely rare — H points at acceptor, not ring).
-            hbond_candidates = [best_hbond_pos]
-        else:
-            # No strong H-bond — H is free to rotate.
-            hbond_candidates = h_candidates_cone
-    else:
-        # C (methyl): C–H···O bonds are too weak (~1-2 kcal/mol) to be
-        # structurally decisive.  Treat all conformations as free.
-        hbond_candidates = h_candidates_cone
-
-    if not hbond_candidates:
-        return
-
-    # In candidates mode, only export if H was locked at a strong H-bond.
-    # Free H (multiple positions) means no reliable direction → skip.
-    if report_xh_candidates and len(hbond_candidates) != 1:
-        return
-
-    # --- Geometric evaluation on surviving conformers ---
-    legacy_best = None
-    legacy_best_score = None
-    legacy_best_h_pos = None
-    p_slab_best = None
-    p_slab_best_score = None
-    p_slab_best_h_pos = None
-
-    h_pos_array = np.array(hbond_candidates)  # (N, 3)
-    batch_metrics = systems._evaluate_systems_batch(
-        rctx, x_elem, x_pos_arr, h_pos_array, dist_x_pi, dist_x_centroid, proj_dist)
-
-    for i, metrics in enumerate(batch_metrics):
-        h_pos_np = hbond_candidates[i]
-
-        if metrics['is_hudson'] or metrics['is_plevin']:
-            legacy_score = metrics['angle_XH_Pi'] if metrics['angle_XH_Pi'] is not None else -1.0
-            if legacy_best_score is None or legacy_score > legacy_best_score:
-                legacy_best_score = legacy_score
-                legacy_best = metrics
-                legacy_best_h_pos = h_pos_np
-
-        if include_p_slab and metrics['is_p_slab']:
-            h_proj_score = metrics['h_proj_dist'] if metrics['h_proj_dist'] is not None else 999.0
-            h_ray_score = metrics['H_ray_t'] if metrics['H_ray_t'] is not None else 999.0
-            p_slab_score = (-h_proj_score, -h_ray_score)
-            if p_slab_best_score is None or p_slab_score > p_slab_best_score:
-                p_slab_best_score = p_slab_score
-                p_slab_best = metrics
-                p_slab_best_h_pos = h_pos_np
-
-    combined = _hits._merge_cone_system_metrics(legacy_best, p_slab_best, True, include_p_slab)
-    if combined is not None:
-        selected_h_pos = legacy_best_h_pos if legacy_best_h_pos is not None else p_slab_best_h_pos
+    if evidence is not None:
+        # Candidate/background mode must not export a direction selected merely
+        # because it can make an XH-pi hit.  A constrained polar conformer has
+        # an independently defined direction and is therefore defensible.
+        if report_xh_candidates and not evidence.hbond_constrained:
+            return
+        selected_h_pos = evidence.conformer.hydrogen_positions[
+            evidence.hydrogen_index]
         _hits._record_hit(hits, rctx, x_cra, x_atom, "virt", dist_x_pi,
-                    dist_x_centroid, x_pos_arr, proj_dist, combined,
+                    dist_x_centroid, x_pos_arr, proj_dist, evidence.metrics,
                     is_cone=True, combined_occ=combined_occ, sym_op=sym_op,
                     h_atom=None, include_p_slab=include_p_slab,
                     include_candidate_metrics=report_xh_candidates,
                     include_coordinates=include_coordinates,
                     sasa_map=sasa_map,
                     h_pos=selected_h_pos)
-

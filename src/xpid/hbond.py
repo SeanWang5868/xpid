@@ -15,6 +15,8 @@ from typing import Dict, List, Any, Optional, Tuple
 import gemmi
 import numpy as np
 
+from . import acceptors
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -139,9 +141,7 @@ def annotate_hbond_competition(
             cra = mark.to_cra(model)
             acceptor = cra.atom
 
-            # Skip non-acceptor elements
-            elem = acceptor.element.name.upper()
-            if elem not in HBOND_ACCEPTOR_ELEMENTS:
+            if not acceptors.is_hbond_acceptor(cra.residue, acceptor):
                 continue
 
             # Skip atoms from the same residue as the donor
@@ -245,8 +245,7 @@ def annotate_rigid_hbond(hits: List[Dict[str, Any]], structure: gemmi.Structure,
 
         for mark in marks:
             cra = mark.to_cra(model)
-            elem = cra.atom.element.name.upper()
-            if elem not in HBOND_ACCEPTOR_ELEMENTS:
+            if not acceptors.is_hbond_acceptor(cra.residue, cra.atom):
                 continue
             if (cra.chain.name == donor_chain and
                 cra.residue.name == donor_res and

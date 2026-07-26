@@ -8,6 +8,7 @@ from typing import Dict, Set, Optional, List
 
 from collections import defaultdict
 from . import monlib
+from . import donors
 
 logger = logging.getLogger("xpid.config")
 
@@ -183,19 +184,10 @@ def get_bonded_hydrogens(res_name: str, atom_name: str) -> Set[str]:
     BONDED_HYDROGENS_CACHE[cache_key] = hydrogens
     return hydrogens
 
-ROTATABLE_MAPPING: Dict[str, Dict[str, str]] = {
-    'ALA': {'CB': 'CA'},
-    'VAL': {'CG1': 'CB', 'CG2': 'CB'},
-    'LEU': {'CD1': 'CG', 'CD2': 'CG'},
-    'ILE': {'CD1': 'CG1', 'CG2': 'CB'}, 
-    'MET': {'CE': 'SD'},
-    'MSE': {'CE': 'SE'},
-    'THR': {'CG2': 'CB', 'OG1': 'CB'},
-    'SER': {'OG': 'CB'},
-    'TYR': {'OH': 'CZ'},
-    'CYS': {'SG': 'CB'},
-    'LYS': {'NZ': 'CE'}
-}
+ROTATABLE_MAPPING: Dict[str, Dict[str, str]] = {}
+for (_res_name, _atom_name), _definition in donors.ROTATABLE_DONORS.items():
+    ROTATABLE_MAPPING.setdefault(_res_name, {})[_atom_name] = (
+        _definition.parent_atom_name)
 
 
 def is_rotatable(res_name: str, atom_name: str) -> bool:
@@ -207,7 +199,7 @@ def is_rotatable(res_name: str, atom_name: str) -> bool:
     structures are riding hydrogens placed by the refinement program and
     do not reflect the true conformational ensemble.
     """
-    return atom_name.upper() in ROTATABLE_MAPPING.get(res_name.upper(), {})
+    return donors.is_rotatable(res_name, atom_name)
 
 BOND_LENGTHS = {
     'C': 1.09, 
