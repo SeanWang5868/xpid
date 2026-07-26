@@ -186,6 +186,19 @@ def process_one_file(task: TaskPacket):
         return f"{task.filepath}: {e}\n{traceback.format_exc()}", 0, [], None, empty_system_summary(task.include_p_slab)
 
 
+def iter_task_results(tasks: List[TaskPacket], jobs: int):
+    """Yield worker results without process overhead for ``jobs=1``."""
+    if jobs < 1:
+        raise ValueError("--jobs must be at least 1")
+    if jobs == 1:
+        for task in tasks:
+            yield process_one_file(task)
+        return
+
+    with multiprocessing.Pool(jobs, maxtasksperchild=100) as pool:
+        yield from pool.imap_unordered(process_one_file, tasks)
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
@@ -395,23 +408,22 @@ def main():
                 include_cooperativity=args.cooperativity)
             streamer.__enter__()
 
-        with multiprocessing.Pool(args.jobs, maxtasksperchild=100) as pool:
-            for i, (err, count, data, out_path, system_summary) in enumerate(
-                    pool.imap_unordered(process_one_file, tasks), 1):
-                if err:
-                    error_logs.append(err)
-                    logging.warning(f"\n[WARN] {err}")
+        for i, (err, count, data, out_path, system_summary) in enumerate(
+                iter_task_results(tasks, args.jobs), 1):
+            if err:
+                error_logs.append(err)
+                logging.warning(f"\n[WARN] {err}")
 
-                total_found += count
-                add_system_summary(system_totals, system_summary)
+            total_found += count
+            add_system_summary(system_totals, system_summary)
 
-                if not args.separate and data:
-                    streamer.write_chunk(data)
+            if not args.separate and data:
+                streamer.write_chunk(data)
 
-                percent = (i / len(files)) * 100
-                sys.stdout.write(
-                    f"\r[INFO] Progress   : {i}/{len(files)} ({percent:.1f}%)")
-                sys.stdout.flush()
+            percent = (i / len(files)) * 100
+            sys.stdout.write(
+                f"\r[INFO] Progress   : {i}/{len(files)} ({percent:.1f}%)")
+            sys.stdout.flush()
 
         if streamer:
             streamer.__exit__(None, None, None)

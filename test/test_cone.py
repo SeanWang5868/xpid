@@ -8,6 +8,7 @@ import pytest
 from xpid import acceptors
 from xpid import cone
 from xpid import donors
+from xpid import xhpi_criteria
 
 
 def _atom(name, element, xyz=(0.0, 0.0, 0.0), occ=1.0):
@@ -218,3 +219,68 @@ def test_altloc_compatibility():
     assert acceptors.altlocs_compatible("A", "")
     assert acceptors.altlocs_compatible("A", "A")
     assert not acceptors.altlocs_compatible("A", "B")
+
+
+def test_vectorized_allowed_set_matches_scalar_reference():
+    definition = donors.get_definition("SER", "OG")
+    parent = np.array([0.0, 0.0, 0.0])
+    x_pos = np.array([1.42, 0.0, 0.0])
+    conformers = cone.generate_conformers(parent, x_pos, definition)
+
+    oxygen = _atom("OD1", "O", (1.4, 1.8, 0.2))
+    carbon = _atom("C1", "C", (1.4, -1.6, 0.1))
+    asp = _residue("ASP", [oxygen])
+    ligand = _residue("LIG", [carbon])
+    environment = [
+        cone.EnvironmentAtom(np.array([1.4, 1.8, 0.2]), oxygen, asp, "B", 0),
+        cone.EnvironmentAtom(np.array([1.4, -1.6, 0.1]), carbon, ligand, "B", 0),
+    ]
+
+    valid_mask, strong_flags = cone._classify_conformer_arrays(
+        conformers, x_pos, environment)
+    for conformer_index, conformer in enumerate(conformers):
+        scalar_states = [
+            cone._hydrogen_state(x_pos, h_pos, environment)
+            for h_pos in conformer.hydrogen_positions
+        ]
+        assert valid_mask[conformer_index] == all(
+            state[0] for state in scalar_states)
+        if valid_mask[conformer_index]:
+            assert strong_flags[conformer_index].tolist() == [
+                state[1] for state in scalar_states
+            ]
+
+
+def test_vectorized_hudson_plevin_matches_scalar_geometry():
+    definition = donors.get_definition("SER", "OG")
+    parent = np.array([1.42, 0.0, 3.0])
+    x_pos = np.array([0.0, 0.0, 3.0])
+    conformers = cone.generate_conformers(parent, x_pos, definition)
+    h_positions = np.asarray([
+        conformer.hydrogen_positions[0] for conformer in conformers])
+    ring_context = SimpleNamespace(
+        pi_center_arr=np.array([0.0, 0.0, 0.0]),
+        pi_normal=np.array([0.0, 0.0, 1.0]),
+        p_radius=2.0,
+        p_slab_half_thickness=0.5,
+    )
+    spatial = xhpi_criteria.prepare_spatial_criteria(
+        ring_context, "O", x_pos, 3.0, 0.0)
+
+    theta, xh_pi, hudson, plevin = (
+        xhpi_criteria.evaluate_hudson_plevin_batch(
+            ring_context, x_pos, h_positions, spatial))
+
+    for index, h_pos in enumerate(h_positions):
+        scalar = xhpi_criteria.evaluate_xhpi_geometry(
+            ring_context, "O", x_pos, h_pos, 3.0, 3.0, 0.0,
+            spatial=spatial, include_direction_metrics=False)
+        assert bool(hudson[index]) == bool(scalar["is_hudson"])
+        assert bool(plevin[index]) == bool(scalar["is_plevin"])
+        if scalar["theta"] is None:
+            assert np.isnan(theta[index])
+        else:
+            assert theta[index] == pytest.approx(
+                scalar["theta"], abs=1e-12)
+        assert xh_pi[index] == pytest.approx(
+            scalar["angle_XH_Pi"], abs=1e-12)

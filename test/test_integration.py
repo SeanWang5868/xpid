@@ -163,6 +163,21 @@ def test_cli_parser_accepts_residue_pair_selectors():
     assert args.residue_pair == ["//A/12", "//A/18"]
 
 
+def test_jobs_one_uses_direct_worker_without_pool(monkeypatch):
+    tasks = [object(), object()]
+    monkeypatch.setattr(
+        cli, "process_one_file", lambda task: ("result", task))
+    monkeypatch.setattr(
+        cli.multiprocessing, "Pool",
+        lambda *args, **kwargs: pytest.fail("Pool should not be created"),
+    )
+
+    assert list(cli.iter_task_results(tasks, jobs=1)) == [
+        ("result", tasks[0]),
+        ("result", tasks[1]),
+    ]
+
+
 def test_read_structure_falls_back_to_rcsb_for_corrupt_named_gzip(tmp_path, monkeypatch):
     from xpid import structure_io
 

@@ -390,6 +390,8 @@ def _run_explicit_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_ma
     """Track 1: Explicit hydrogen geometry. Returns (found_systems, orig_h_positions)."""
     found_systems: Set[str] = set()
     orig_h_positions = []
+    spatial = xhpi_criteria.prepare_spatial_criteria(
+        rctx, x_elem, x_pos_arr, dist_x_centroid, proj_dist)
 
     h_search_pos = x_mark.pos if is_sym_mate else x_atom.pos
     h_candidates = rctx.ns.find_atoms(h_search_pos, alt=x_atom.altloc, radius=config.DIST_CUTOFF_H)
@@ -431,7 +433,10 @@ def _run_explicit_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_ma
 
         h_combined_occ = min(combined_occ, h_atom.occ)
         metrics = xhpi_criteria.evaluate_xhpi_geometry(
-            rctx, x_elem, x_pos_arr, h_pos_arr, dist_x_pi, dist_x_centroid, proj_dist)
+            rctx, x_elem, x_pos_arr, h_pos_arr, dist_x_pi,
+            dist_x_centroid, proj_dist, spatial=spatial,
+            include_direction_metrics=(
+                include_p_slab or report_xh_candidates))
         is_p_slab_hit = include_p_slab and metrics['is_p_slab']
         is_candidate_hit = (
             report_xh_candidates and
@@ -564,6 +569,10 @@ def _run_cone_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_mark, 
         environment.append(cone.EnvironmentAtom(
             _pos_to_arr(n_mark.pos), n_cra.atom, n_cra.residue,
             n_cra.chain.name, n_mark.image_idx,
+            cone.VDW_RADII.get(n_elem, cone.DEFAULT_VDW_RADIUS),
+            hbond_acceptors.is_hbond_acceptor(
+                n_cra.residue, n_cra.atom),
+            n_cra.atom.occ,
         ))
 
     evidence = cone.evaluate_binary(

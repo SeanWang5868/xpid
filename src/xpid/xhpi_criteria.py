@@ -1,8 +1,107 @@
 """Geometric evaluation of Hudson, Plevin, and P-slab XH–π criteria."""
+from dataclasses import dataclass
 import numpy as np
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from . import config
 from . import geometry
+
+
+@dataclass(frozen=True)
+class SpatialCriteria:
+    p_dmax: float
+    xpcn_angle: Optional[float]
+    hudson_dist_ok: int
+    hudson_proj_ok: int
+    is_hudson_spatial: int
+    plevin_dist_ok: int
+    plevin_xpcn_ok: int
+    is_plevin_spatial: int
+
+
+def prepare_spatial_criteria(
+        rctx, x_elem: str, x_pos: np.ndarray,
+        dist_x_centroid: float,
+        proj_dist: Optional[float]) -> SpatialCriteria:
+    """Precompute X/π geometry that is invariant across H conformers."""
+    p_dmax = config.P_PLANE_DMAX.get(
+        x_elem, config.P_PLANE_DMAX["default"])
+    xpcn_angle = geometry.calculate_xpcn_angle(
+        x_pos, rctx.pi_center_arr, rctx.pi_normal)
+    hudson_dist_ok = int(dist_x_centroid <= p_dmax)
+    hudson_proj_ok = int(
+        proj_dist is not None and proj_dist <= rctx.p_radius)
+    plevin_dist_ok = int(dist_x_centroid < p_dmax)
+    plevin_xpcn_ok = int(
+        xpcn_angle is not None and
+        xpcn_angle < config.PLEVIN_XPCN_MAX)
+    return SpatialCriteria(
+        p_dmax=p_dmax,
+        xpcn_angle=xpcn_angle,
+        hudson_dist_ok=hudson_dist_ok,
+        hudson_proj_ok=hudson_proj_ok,
+        is_hudson_spatial=int(hudson_dist_ok and hudson_proj_ok),
+        plevin_dist_ok=plevin_dist_ok,
+        plevin_xpcn_ok=plevin_xpcn_ok,
+        is_plevin_spatial=int(plevin_dist_ok and plevin_xpcn_ok),
+    )
+
+
+def evaluate_hudson_plevin_batch(
+        rctx,
+        x_pos: np.ndarray,
+        h_positions: np.ndarray,
+        spatial: SpatialCriteria,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Vectorized binary Hudson/Plevin direction evaluation."""
+    count = len(h_positions)
+    theta = np.full(count, np.nan)
+    xh_pi_angle = np.full(count, np.nan)
+    if count == 0:
+        empty = np.zeros(0, dtype=bool)
+        return theta, xh_pi_angle, empty, empty
+
+    v_xh = h_positions - x_pos
+    norm_xh = np.linalg.norm(v_xh, axis=1)
+
+    v_x_pi = rctx.pi_center_arr - x_pos
+    normal = rctx.pi_normal
+    norm_normal = np.linalg.norm(normal)
+    toward_ring = np.einsum("ij,j->i", v_xh, v_x_pi) > 0
+    hudson_valid = toward_ring & (norm_xh != 0) & (norm_normal != 0)
+    if np.any(hudson_valid):
+        cosines = (
+            np.einsum("ij,j->i", v_xh[hudson_valid], normal) /
+            (norm_xh[hudson_valid] * norm_normal)
+        )
+        angles = np.degrees(
+            np.arccos(np.clip(cosines, -1.0, 1.0)))
+        angles = np.where(angles >= 90.0, 180.0 - angles, angles)
+        theta[hudson_valid] = angles
+
+    v_hx = -v_xh
+    v_hc = rctx.pi_center_arr - h_positions
+    norm_hc = np.linalg.norm(v_hc, axis=1)
+    plevin_valid = (norm_xh != 0) & (norm_hc != 0)
+    if np.any(plevin_valid):
+        cosines = (
+            np.einsum(
+                "ij,ij->i", v_hx[plevin_valid], v_hc[plevin_valid]) /
+            (norm_xh[plevin_valid] * norm_hc[plevin_valid])
+        )
+        xh_pi_angle[plevin_valid] = np.degrees(
+            np.arccos(np.clip(cosines, -1.0, 1.0)))
+
+    is_hudson = (
+        bool(spatial.is_hudson_spatial) &
+        np.isfinite(theta) &
+        (theta <= config.HUDSON_THETA_MAX)
+    )
+    is_plevin = (
+        bool(spatial.is_plevin_spatial) &
+        np.isfinite(xh_pi_angle) &
+        (xh_pi_angle >= config.PLEVIN_XH_PI_MIN)
+    )
+    return theta, xh_pi_angle, is_hudson, is_plevin
 
 
 def _cosine_between(vec_a: np.ndarray, vec_b: np.ndarray) -> Optional[float]:
@@ -94,32 +193,40 @@ def evaluate_xhpi_geometry(
         rctx: "ring_conformers.RingContext", x_elem: str, x_pos: np.ndarray,
         h_pos: np.ndarray, dist_x_plane: Optional[float],
         dist_x_centroid: float,
-        proj_dist: Optional[float]) -> Dict[str, Any]:
+        proj_dist: Optional[float],
+        spatial: Optional[SpatialCriteria] = None,
+        include_direction_metrics: bool = True) -> Dict[str, Any]:
     """Calculate Hudson, Plevin, and P-slab metrics for one X-H candidate."""
     theta = geometry.calculate_hudson_theta(rctx.pi_center_arr, x_pos, h_pos, rctx.pi_normal)
-    xpcn_angle = geometry.calculate_xpcn_angle(x_pos, rctx.pi_center_arr, rctx.pi_normal)
     xh_pi_angle = geometry.calculate_xh_picenter_angle(rctx.pi_center_arr, x_pos, h_pos)
 
-    p_dmax = config.P_PLANE_DMAX.get(x_elem, config.P_PLANE_DMAX['default'])
-    direction_metrics = _calculate_direction_metrics(rctx, x_pos, h_pos, proj_dist)
+    if spatial is None:
+        spatial = prepare_spatial_criteria(
+            rctx, x_elem, x_pos, dist_x_centroid, proj_dist)
+    xpcn_angle = spatial.xpcn_angle
+    direction_metrics = (
+        _calculate_direction_metrics(rctx, x_pos, h_pos, proj_dist)
+        if include_direction_metrics else {}
+    )
 
-    hudson_dist_ok = int(dist_x_centroid <= p_dmax)
-    hudson_proj_ok = int(proj_dist is not None and proj_dist <= rctx.p_radius)
+    hudson_dist_ok = spatial.hudson_dist_ok
+    hudson_proj_ok = spatial.hudson_proj_ok
     hudson_direction_ok = int(theta is not None and theta <= config.HUDSON_THETA_MAX)
-    is_hudson_spatial = int(hudson_dist_ok and hudson_proj_ok)
+    is_hudson_spatial = spatial.is_hudson_spatial
 
-    plevin_dist_ok = int(dist_x_centroid < p_dmax)
-    plevin_xpcn_ok = int(xpcn_angle is not None and xpcn_angle < config.PLEVIN_XPCN_MAX)
+    plevin_dist_ok = spatial.plevin_dist_ok
+    plevin_xpcn_ok = spatial.plevin_xpcn_ok
     plevin_direction_ok = int(
         xh_pi_angle is not None and xh_pi_angle >= config.PLEVIN_XH_PI_MIN)
-    is_plevin_spatial = int(plevin_dist_ok and plevin_xpcn_ok)
+    is_plevin_spatial = spatial.is_plevin_spatial
 
     is_hudson = int(is_hudson_spatial and hudson_direction_ok)
     is_plevin = int(is_plevin_spatial and plevin_direction_ok)
     is_p_slab = int(
-        dist_x_plane is not None and dist_x_plane <= p_dmax and
+        include_direction_metrics and
+        dist_x_plane is not None and dist_x_plane <= spatial.p_dmax and
         proj_dist is not None and proj_dist <= rctx.p_radius and
-        direction_metrics['h_proj_dist'] is not None and
+        direction_metrics.get('h_proj_dist') is not None and
         direction_metrics['h_proj_dist'] <= rctx.p_radius
     )
 

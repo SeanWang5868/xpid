@@ -10,6 +10,7 @@ import sys
 import urllib.error
 import urllib.request
 import zipfile
+from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
 
@@ -79,6 +80,7 @@ def is_monomer_library(path: Optional[Path]) -> bool:
     )
 
 
+@lru_cache(maxsize=1)
 def find_installed_monomer_library() -> Optional[str]:
     for path in _candidate_paths():
         if is_monomer_library(path):
@@ -86,6 +88,7 @@ def find_installed_monomer_library() -> Optional[str]:
     return None
 
 
+@lru_cache(maxsize=1)
 def get_monomer_library_path() -> str:
     local = find_installed_monomer_library()
     if local:
@@ -157,6 +160,7 @@ def download_ccp4_monomer_library(timeout: float = 120.0) -> Optional[Path]:
             shutil.rmtree(tmp_extract, ignore_errors=True)
 
 
+@lru_cache(maxsize=None)
 def find_monomer_cif(code: str) -> Optional[Path]:
     root = Path(get_monomer_library_path())
     code = code.upper()
@@ -169,3 +173,10 @@ def find_monomer_cif(code: str) -> Optional[Path]:
         if candidate.is_file():
             return candidate
     return None
+
+
+def clear_path_caches() -> None:
+    """Clear monomer discovery caches after environment/path changes."""
+    find_monomer_cif.cache_clear()
+    get_monomer_library_path.cache_clear()
+    find_installed_monomer_library.cache_clear()

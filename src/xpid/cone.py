@@ -39,6 +39,9 @@ class EnvironmentAtom:
     residue: gemmi.Residue
     chain_name: str
     image_idx: int
+    vdw_radius: Optional[float] = None
+    is_hbond_acceptor: Optional[bool] = None
+    occupancy: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -105,12 +108,31 @@ def _dha_angle(x_pos: np.ndarray, h_pos: np.ndarray,
     return float(np.degrees(np.arccos(cosine)))
 
 
+def _environment_properties(
+        env: EnvironmentAtom) -> Tuple[float, bool, float]:
+    """Return cached vdW radius, acceptor typing and occupancy."""
+    radius = (
+        env.vdw_radius if env.vdw_radius is not None else
+        VDW_RADII.get(
+            env.atom.element.name.upper(), DEFAULT_VDW_RADIUS)
+    )
+    is_acceptor = (
+        env.is_hbond_acceptor
+        if env.is_hbond_acceptor is not None else
+        hbond_acceptors.is_hbond_acceptor(env.residue, env.atom)
+    )
+    occupancy = (
+        env.occupancy if env.occupancy is not None else env.atom.occ)
+    return radius, is_acceptor, occupancy
+
+
 def _hbond_geometry(x_pos: np.ndarray, h_pos: np.ndarray,
                     env: EnvironmentAtom) -> Tuple[bool, bool]:
     """Return (chemically valid H-bond contact, strong direction constraint)."""
-    if env.atom.occ < ACCEPTOR_MIN_OCCUPANCY:
+    _, is_acceptor, occupancy = _environment_properties(env)
+    if occupancy < ACCEPTOR_MIN_OCCUPANCY:
         return False, False
-    if not hbond_acceptors.is_hbond_acceptor(env.residue, env.atom):
+    if not is_acceptor:
         return False, False
     distance = float(np.linalg.norm(env.position - h_pos))
     if not (ABSOLUTE_MIN_HA <= distance <= HBOND_CONTACT_HA_MAX):
@@ -139,46 +161,19 @@ def _hydrogen_state(x_pos: np.ndarray, h_pos: np.ndarray,
 
         if distance < ABSOLUTE_MIN_HA:
             return False, has_strong_hbond
-        env_radius = VDW_RADII.get(
-            env.atom.element.name.upper(), DEFAULT_VDW_RADIUS)
+        env_radius, _, _ = _environment_properties(env)
         if distance < CLASH_SCALE * (VDW_RADII["H"] + env_radius):
             return False, has_strong_hbond
     return True, has_strong_hbond
 
 
-def _strong_hbond_directions(
-    x_pos: np.ndarray,
-    h_pos: np.ndarray,
-    environment: Sequence[EnvironmentAtom],
-) -> List[np.ndarray]:
-    """Return unit H→acceptor directions for strong conventional H-bonds."""
-    directions = []
-    for env in environment:
-        _, strong = _hbond_geometry(x_pos, h_pos, env)
-        if not strong:
-            continue
-        direction = env.position - h_pos
-        norm = np.linalg.norm(direction)
-        if norm:
-            directions.append(direction / norm)
-    return directions
-
-
 def _candidate_hbond_relation(
-    conformer: HydrogenConformer,
     hydrogen_index: int,
-    x_pos: np.ndarray,
-    environment: Sequence[EnvironmentAtom],
+    strong_flags: np.ndarray,
     alternative_hbond_exists: bool,
 ) -> str:
-    selected_strong = False
-    other_strong = False
-    for index, h_pos in enumerate(conformer.hydrogen_positions):
-        strong = bool(_strong_hbond_directions(x_pos, h_pos, environment))
-        if index == hydrogen_index:
-            selected_strong = strong
-        else:
-            other_strong = other_strong or strong
+    selected_strong = bool(strong_flags[hydrogen_index])
+    other_strong = bool(np.any(np.delete(strong_flags, hydrogen_index)))
     if selected_strong and other_strong:
         return "multiple"
     if selected_strong:
@@ -190,28 +185,92 @@ def _candidate_hbond_relation(
     return "none"
 
 
+def _classify_conformer_arrays(
+    conformers: Sequence[HydrogenConformer],
+    x_pos: np.ndarray,
+    environment: Sequence[EnvironmentAtom],
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Vectorized steric validity and per-hydrogen strong-H-bond flags."""
+    if not conformers:
+        return np.zeros(0, dtype=bool), np.zeros((0, 0), dtype=bool)
+
+    h_positions = np.asarray([
+        conformer.hydrogen_positions for conformer in conformers
+    ], dtype=float)
+    n_conformers, n_hydrogens, _ = h_positions.shape
+    if not environment:
+        return (
+            np.ones(n_conformers, dtype=bool),
+            np.zeros((n_conformers, n_hydrogens), dtype=bool),
+        )
+
+    env_positions = np.asarray(
+        [env.position for env in environment], dtype=float)
+    properties = [_environment_properties(env) for env in environment]
+    env_radii = np.asarray([item[0] for item in properties])
+    acceptor_mask = np.asarray([
+        item[1] and item[2] >= ACCEPTOR_MIN_OCCUPANCY
+        for item in properties
+    ], dtype=bool)
+
+    h_to_env = (
+        env_positions[None, None, :, :] - h_positions[:, :, None, :])
+    distances = np.linalg.norm(h_to_env, axis=-1)
+
+    h_to_x = x_pos[None, None, :] - h_positions
+    xh_norms = np.linalg.norm(h_to_x, axis=-1)
+    denominators = xh_norms[:, :, None] * distances
+    dot_products = np.einsum("chd,ched->che", h_to_x, h_to_env)
+    cosines = np.divide(
+        dot_products, denominators,
+        out=np.ones_like(dot_products),
+        where=denominators != 0,
+    )
+    angles = np.degrees(np.arccos(np.clip(cosines, -1.0, 1.0)))
+
+    hbond_contacts = (
+        acceptor_mask[None, None, :] &
+        (distances >= ABSOLUTE_MIN_HA) &
+        (distances <= HBOND_CONTACT_HA_MAX) &
+        (angles >= HBOND_CONTACT_DHA_MIN)
+    )
+    strong_hbonds = (
+        hbond_contacts &
+        (distances <= STRONG_HBOND_HA_MAX) &
+        (angles >= STRONG_HBOND_DHA_MIN)
+    )
+
+    clash_thresholds = (
+        CLASH_SCALE * (VDW_RADII["H"] + env_radii))
+    clashes = (
+        ~hbond_contacts &
+        (
+            (distances < ABSOLUTE_MIN_HA) |
+            (distances < clash_thresholds[None, None, :])
+        )
+    )
+    hydrogen_valid = ~np.any(clashes, axis=2)
+    conformer_valid = np.all(hydrogen_valid, axis=1)
+    hydrogen_strong = np.any(strong_hbonds, axis=2)
+    return conformer_valid, hydrogen_strong
+
+
 def classify_conformers(
     conformers: Sequence[HydrogenConformer],
     x_pos: np.ndarray,
     environment: Sequence[EnvironmentAtom],
 ) -> Tuple[List[HydrogenConformer], List[HydrogenConformer]]:
     """Return sterically allowed and H-bond-capable conformers."""
-    sterically_allowed: List[HydrogenConformer] = []
-    hbond_capable: List[HydrogenConformer] = []
-
-    for conformer in conformers:
-        conformer_valid = True
-        conformer_hbond = False
-        for h_pos in conformer.hydrogen_positions:
-            h_valid, h_hbond = _hydrogen_state(x_pos, h_pos, environment)
-            if not h_valid:
-                conformer_valid = False
-                break
-            conformer_hbond = conformer_hbond or h_hbond
-        if conformer_valid:
-            sterically_allowed.append(conformer)
-            if conformer_hbond:
-                hbond_capable.append(conformer)
+    valid_mask, strong_flags = _classify_conformer_arrays(
+        conformers, x_pos, environment)
+    sterically_allowed = [
+        conformer for index, conformer in enumerate(conformers)
+        if valid_mask[index]
+    ]
+    hbond_capable = [
+        conformer for index, conformer in enumerate(conformers)
+        if valid_mask[index] and np.any(strong_flags[index])
+    ]
     return sterically_allowed, hbond_capable
 
 
@@ -248,26 +307,84 @@ def evaluate_binary(
     retained as descriptive context and never changes the binary result.
     """
     conformers = generate_conformers(parent_pos, x_pos, definition)
-    sterically_allowed, hbond_capable = classify_conformers(
+    valid_mask, strong_flags = _classify_conformer_arrays(
         conformers, x_pos, environment)
-    if not sterically_allowed:
+    valid_indices = np.flatnonzero(valid_mask)
+    if valid_indices.size == 0:
         return None
 
-    alternative_hbond_exists = bool(hbond_capable)
+    alternative_hbond_exists = bool(np.any(strong_flags[valid_mask]))
 
-    positive: List[PositiveEvidence] = []
-    for conformer in sterically_allowed:
-        for h_index, h_pos in enumerate(conformer.hydrogen_positions):
-            metrics = xhpi_criteria.evaluate_xhpi_geometry(
-                rctx, x_element, x_pos, h_pos,
-                dist_x_plane, dist_x_centroid, proj_dist,
-            )
-            if metrics["is_hudson"] or metrics["is_plevin"] or (
-                    include_p_slab and metrics["is_p_slab"]):
-                relation = _candidate_hbond_relation(
-                    conformer, h_index, x_pos, environment,
-                    alternative_hbond_exists)
-                positive.append(PositiveEvidence(
-                    conformer, h_index, metrics, relation))
+    spatial = xhpi_criteria.prepare_spatial_criteria(
+        rctx, x_element, x_pos, dist_x_centroid, proj_dist)
 
-    return max(positive, key=_evidence_rank) if positive else None
+    # P-slab is optional and relatively uncommon. Preserve its exact scalar
+    # path, while the default Hudson/Plevin production path is vectorized.
+    if include_p_slab:
+        positive: List[PositiveEvidence] = []
+        for conformer_index in valid_indices:
+            conformer = conformers[int(conformer_index)]
+            for h_index, h_pos in enumerate(conformer.hydrogen_positions):
+                metrics = xhpi_criteria.evaluate_xhpi_geometry(
+                    rctx, x_element, x_pos, h_pos,
+                    dist_x_plane, dist_x_centroid, proj_dist,
+                    spatial=spatial,
+                )
+                if (metrics["is_hudson"] or metrics["is_plevin"] or
+                        metrics["is_p_slab"]):
+                    relation = _candidate_hbond_relation(
+                        h_index, strong_flags[conformer_index],
+                        alternative_hbond_exists)
+                    positive.append(PositiveEvidence(
+                        conformer, h_index, metrics, relation))
+        return max(positive, key=_evidence_rank) if positive else None
+
+    candidate_map = [
+        (int(conformer_index), h_index)
+        for conformer_index in valid_indices
+        for h_index in range(
+            len(conformers[int(conformer_index)].hydrogen_positions))
+    ]
+    h_positions = np.asarray([
+        conformers[conformer_index].hydrogen_positions[h_index]
+        for conformer_index, h_index in candidate_map
+    ])
+    theta, xh_pi, is_hudson, is_plevin = (
+        xhpi_criteria.evaluate_hudson_plevin_batch(
+            rctx, x_pos, h_positions, spatial))
+    positive_indices = np.flatnonzero(is_hudson | is_plevin)
+    if positive_indices.size == 0:
+        return None
+
+    def rank(candidate_index: int) -> tuple:
+        conformer_index, h_index = candidate_map[candidate_index]
+        hudson = int(is_hudson[candidate_index])
+        plevin = int(is_plevin[candidate_index])
+        theta_value = (
+            float(theta[candidate_index])
+            if np.isfinite(theta[candidate_index]) else None)
+        xh_pi_value = (
+            float(xh_pi[candidate_index])
+            if np.isfinite(xh_pi[candidate_index]) else None)
+        return (
+            int(hudson and plevin),
+            hudson + plevin,
+            -(theta_value if theta_value is not None else 999.0),
+            xh_pi_value if xh_pi_value is not None else -999.0,
+            -conformers[conformer_index].phi,
+            -h_index,
+        )
+
+    selected_index = max(
+        (int(index) for index in positive_indices), key=rank)
+    conformer_index, h_index = candidate_map[selected_index]
+    conformer = conformers[conformer_index]
+    metrics = xhpi_criteria.evaluate_xhpi_geometry(
+        rctx, x_element, x_pos, conformer.hydrogen_positions[h_index],
+        dist_x_plane, dist_x_centroid, proj_dist,
+        spatial=spatial, include_direction_metrics=False,
+    )
+    relation = _candidate_hbond_relation(
+        h_index, strong_flags[conformer_index],
+        alternative_hbond_exists)
+    return PositiveEvidence(conformer, h_index, metrics, relation)
