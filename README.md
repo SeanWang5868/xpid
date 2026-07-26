@@ -129,6 +129,7 @@ a zero-thickness disk.
 | `--h-mode N` | Gemmi hydrogen mode: 0=NoChange, 1=Shift, 2=Remove, 3=ReAdd, 4=ReAddButWater, 5=ReAddKnown. |
 | `--model ID` | Model index to analyze, or `all`. |
 | `--no-cone` | Disable binary cone detection and use explicit hydrogen positions only. Rotatable donors (Ser, Thr, Tyr, Cys, Lys, methyl groups) use cone detection by default. |
+| `--no-hbond-gate` | Deprecated compatibility option. Standard Cone detection already evaluates all sterically valid conformers; this only affects `--xh-candidates`. |
 | `--include-p-slab`, `--p-slab` | Include the optional P-slab system, P-slab output columns, and P-slab summary counts. |
 | `--xh-candidates` | Export all explicit X-H bonds passing Hudson/Plevin X-position filters, including direction-failed candidates. Cone virtual H is ignored in this mode. |
 | `--sym-contacts` | Detect contacts across crystallographic symmetry mates. |
@@ -173,7 +174,9 @@ With `--cooperativity` (default), simple mode additionally includes
 `coop_same_face_donors`, `coop_opp_face_donors`, `coop_total_donors`, and
 `coop_bi_face`.  Verbose mode additionally includes conventional H-bond
 competition columns (`hbond_competing`, `hbond_acceptor_*`, `hbond_HA_dist`,
-`hbond_DHA_angle`, `hbond_vs_xhpi_score`).
+`hbond_DHA_angle`, `hbond_vs_xhpi_score`) and `hbond_relation`, which
+distinguishes same-hydrogen, same-conformer-other-hydrogen, and
+alternative-conformer H-bond context.
 
 Verbose mode adds secondary-structure annotations, P center and X coordinates,
 sequence separation, and B-factors.
@@ -202,11 +205,11 @@ directional filters.
   120-degree rotational period. Group-specific CCP4 bond lengths and angles
   are used, including the non-tetrahedral Cys S-H angle.
 - Cone conformers are rejected for severe non-bonded clashes. A chemically
-  valid H-bond contact is not treated as a clash. For polar rotatable groups,
-  if one or more strong conventional H-bond conformers exist (H...A <= 2.5
-  Angstrom and X-H...A >= 140 degrees), only those complete conformers are
-  eligible for XH-pi detection. The H-bond rule constrains direction; it does
-  not automatically exclude XH-pi, and it is not an energy calculation.
+  valid H-bond contact is not treated as a clash. Potential conventional
+  H-bonds are descriptive context and do not remove other sterically valid
+  conformers from the default binary detector. This avoids treating the mere
+  existence of a hypothetical H-bond rotamer as proof that the donor is
+  committed to that direction.
 - Every reported cone row uses one self-consistent conformer: its H
   coordinates, Hudson/Plevin labels, and geometric columns all refer to the
   same virtual hydrogen. Use `--no-cone` to rely on explicit hydrogens only

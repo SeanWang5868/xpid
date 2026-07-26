@@ -124,7 +124,7 @@ def test_sasa_only_with_flag(structure_5fjj):
         structure_5fjj, "5fjj", compute_sasa=True)
     for hit in hits_sasa:
         assert "pi_sasa_avg" in hit
-        assert hit["pi_sasa_avg"] > 0, "SASA should be positive"
+        assert hit["pi_sasa_avg"] >= 0, "SASA cannot be negative"
 
 
 # ---------------------------------------------------------------

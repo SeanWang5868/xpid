@@ -12,6 +12,18 @@ from . import donors
 from . import systems
 
 
+HBOND_POLICY_NONE = "none"
+HBOND_POLICY_LEGACY = "legacy"
+HBOND_POLICY_CANDIDATE_VETO = "candidate_veto"
+HBOND_POLICY_COMPETING_VETO = "competing_veto"
+HBOND_POLICIES = {
+    HBOND_POLICY_NONE,
+    HBOND_POLICY_LEGACY,
+    HBOND_POLICY_CANDIDATE_VETO,
+    HBOND_POLICY_COMPETING_VETO,
+}
+COMPETING_HBOND_MIN_SEPARATION = 60.0
+
 VDW_RADII = {
     "H": 1.20, "D": 1.20, "C": 1.70, "N": 1.55, "O": 1.52,
     "S": 1.80, "P": 1.80, "SE": 1.90,
@@ -47,6 +59,7 @@ class PositiveEvidence:
     hydrogen_index: int
     metrics: Dict[str, Any]
     hbond_constrained: bool
+    hbond_relation: str = "none"
 
 
 def _orthonormal_frame(parent_pos: np.ndarray,
@@ -146,6 +159,50 @@ def _hydrogen_state(x_pos: np.ndarray, h_pos: np.ndarray,
     return True, has_strong_hbond
 
 
+def _strong_hbond_directions(
+    x_pos: np.ndarray,
+    h_pos: np.ndarray,
+    environment: Sequence[EnvironmentAtom],
+) -> List[np.ndarray]:
+    """Return unit H→acceptor directions for strong conventional H-bonds."""
+    directions = []
+    for env in environment:
+        _, strong = _hbond_geometry(x_pos, h_pos, env)
+        if not strong:
+            continue
+        direction = env.position - h_pos
+        norm = np.linalg.norm(direction)
+        if norm:
+            directions.append(direction / norm)
+    return directions
+
+
+def _candidate_hbond_relation(
+    conformer: HydrogenConformer,
+    hydrogen_index: int,
+    x_pos: np.ndarray,
+    environment: Sequence[EnvironmentAtom],
+    alternative_hbond_exists: bool,
+) -> str:
+    selected_strong = False
+    other_strong = False
+    for index, h_pos in enumerate(conformer.hydrogen_positions):
+        strong = bool(_strong_hbond_directions(x_pos, h_pos, environment))
+        if index == hydrogen_index:
+            selected_strong = strong
+        else:
+            other_strong = other_strong or strong
+    if selected_strong and other_strong:
+        return "multiple"
+    if selected_strong:
+        return "same_hydrogen"
+    if other_strong:
+        return "same_conformer_other_hydrogen"
+    if alternative_hbond_exists:
+        return "alternative_conformer"
+    return "none"
+
+
 def filter_conformers(
     conformers: Sequence[HydrogenConformer],
     x_pos: np.ndarray,
@@ -197,20 +254,34 @@ def evaluate_binary(
     dist_x_centroid: float,
     proj_dist: Optional[float],
     include_p_slab: bool = False,
-    disable_hbond_constraint: bool = False,
+    disable_hbond_constraint: Optional[bool] = None,
+    hbond_policy: str = HBOND_POLICY_NONE,
 ) -> Optional[PositiveEvidence]:
-    """Return one self-consistent positive H conformer, or ``None``."""
+    """Return one self-consistent positive H conformer, or ``None``.
+
+    The production default is a steric-only allowed set.  H-bond geometry is
+    retained as descriptive context.  ``legacy`` reproduces the former global
+    rule; the two veto policies are experimental validation arms.
+    """
+    if disable_hbond_constraint is not None:
+        hbond_policy = (
+            HBOND_POLICY_NONE if disable_hbond_constraint
+            else HBOND_POLICY_LEGACY
+        )
+    if hbond_policy not in HBOND_POLICIES:
+        raise ValueError(f"Unknown H-bond policy: {hbond_policy}")
     conformers = generate_conformers(parent_pos, x_pos, definition)
     valid, constrained = filter_conformers(conformers, x_pos, environment)
     if not valid:
         return None
 
     use_constraint = (
+        hbond_policy == HBOND_POLICY_LEGACY and
         definition.allow_hbond_constraint and
-        not disable_hbond_constraint and
         bool(constrained)
     )
     allowed = constrained if use_constraint else valid
+    alternative_hbond_exists = bool(constrained)
 
     positive: List[PositiveEvidence] = []
     for conformer in allowed:
@@ -221,7 +292,26 @@ def evaluate_binary(
             )
             if metrics["is_hudson"] or metrics["is_plevin"] or (
                     include_p_slab and metrics["is_p_slab"]):
+                strong_directions = _strong_hbond_directions(
+                    x_pos, h_pos, environment)
+                if (hbond_policy == HBOND_POLICY_CANDIDATE_VETO and
+                        strong_directions):
+                    continue
+                if (hbond_policy == HBOND_POLICY_COMPETING_VETO and
+                        strong_directions):
+                    h_to_pi = rctx.pi_center_arr - h_pos
+                    norm = np.linalg.norm(h_to_pi)
+                    if norm and any(
+                        float(np.degrees(np.arccos(np.clip(
+                            np.dot(direction, h_to_pi / norm), -1.0, 1.0))))
+                        >= COMPETING_HBOND_MIN_SEPARATION
+                        for direction in strong_directions
+                    ):
+                        continue
+                relation = _candidate_hbond_relation(
+                    conformer, h_index, x_pos, environment,
+                    alternative_hbond_exists)
                 positive.append(PositiveEvidence(
-                    conformer, h_index, metrics, use_constraint))
+                    conformer, h_index, metrics, use_constraint, relation))
 
     return max(positive, key=_evidence_rank) if positive else None

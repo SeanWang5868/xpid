@@ -231,7 +231,7 @@ def _build_parser() -> argparse.ArgumentParser:
     proc.add_argument('--no-cone', action="store_true",
                       help="Disable cone rescue. Use explicit hydrogen positions only.")
     proc.add_argument('--no-hbond-gate', action="store_true",
-                      help="Disable H-bond competition gate in cone rescue. All sterically-valid conformers are evaluated.")
+                      help="Deprecated compatibility option. Standard Cone detection already evaluates all sterically-valid conformers; this only affects --xh-candidates.")
     proc.add_argument('--include-p-slab', '--p-slab', dest='include_p_slab',
                       action='store_true', default=False,
                       help="Include the optional P-slab system and P-slab output columns.")

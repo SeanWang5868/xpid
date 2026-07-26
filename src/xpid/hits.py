@@ -116,7 +116,8 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "rings._RingContext",
                 include_candidate_metrics: bool = False,
                 include_coordinates: bool = False,
                 sasa_map: Optional[Dict] = None,
-                h_pos: Optional[np.ndarray] = None):
+                h_pos: Optional[np.ndarray] = None,
+                hbond_relation: str = "none"):
     
     if combined_occ < rctx.min_occ:
         return
@@ -188,6 +189,7 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "rings._RingContext",
         '_pi_alt': rctx.pi_alt,
         '_X_alt': rings._altloc(x_atom),
         '_H_alt': rings._altloc(h_atom) if h_atom is not None else "",
+        'hbond_relation': hbond_relation,
     }
 
     if include_candidate_metrics:

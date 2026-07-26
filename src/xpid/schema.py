@@ -116,6 +116,8 @@ FIELDS: Tuple[Field, ...] = (
 
     # -- H-bond competition (always computed, verbose output) ---------------
     Field("hbond_competing", "int", "hbond", 0, "1 if a competing H-bond acceptor was found"),
+    Field("hbond_relation", "str", "hbond", "none",
+          "none / same_hydrogen / same_conformer_other_hydrogen / alternative_conformer / multiple"),
     Field("hbond_acceptor_atom", "str", "hbond", None, "Atom name of strongest competing acceptor"),
     Field("hbond_acceptor_res", "str", "hbond", None, "Residue of strongest competing acceptor"),
     Field("hbond_acceptor_chain", "str", "hbond", None, "Chain of strongest competing acceptor"),

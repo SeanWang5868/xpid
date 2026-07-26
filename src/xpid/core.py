@@ -504,7 +504,11 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
         rctx, donor_definition, parent_pos_arr, x_pos_arr, x_elem,
         environment, dist_x_pi, dist_x_centroid, proj_dist,
         include_p_slab=include_p_slab,
-        disable_hbond_constraint=no_hbond_gate,
+        hbond_policy=(
+            cone.HBOND_POLICY_LEGACY
+            if report_xh_candidates and not no_hbond_gate
+            else cone.HBOND_POLICY_NONE
+        ),
     )
     if evidence is not None:
         # Candidate/background mode must not export a direction selected merely
@@ -521,4 +525,5 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                     include_candidate_metrics=report_xh_candidates,
                     include_coordinates=include_coordinates,
                     sasa_map=sasa_map,
-                    h_pos=selected_h_pos)
+                    h_pos=selected_h_pos,
+                    hbond_relation=evidence.hbond_relation)
