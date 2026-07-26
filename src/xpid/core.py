@@ -3,7 +3,7 @@ core.py
 Core logic for detecting XH-π interactions with Hudson/Plevin labels by default.
 The P-slab system is retained as an opt-in method-development mode.
 Track 1: Explicit H (Default)
-Track 2: Implicit/Cone rescue (disabled by default; enable with use_cone=True)
+Track 2: Binary conformer-existence test for chemically rotatable groups
 """
 import gemmi
 import logging
@@ -176,12 +176,19 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
     hits = _hits._deduplicate_hits(results, prefer_directional=not report_xh_candidates)
     if annotate_cooperativity:
         hits = cooperativity.annotate_cooperativity(hits)
-    # Annotate H-bond competition
-    # Build a single NeighborSearch shared by both annotation passes
-    _hbond_ns = gemmi.NeighborSearch(structure[0], structure.cell, 5.0)
-    _hbond_ns.populate(include_h=False)
-    hbond.annotate_rigid_hbond(hits, structure, ns=_hbond_ns)
-    hbond.annotate_hbond_competition(hits, structure, ns=_hbond_ns)
+    # Annotate each model against its own coordinates.  Reusing model 0 for
+    # ``--model all`` can assign acceptors from the wrong conformer/model.
+    for model_index, model in enumerate(structure):
+        model_name = getattr(model, "name", str(model_index + 1))
+        model_hits = [hit for hit in hits if str(hit.get("model")) == str(model_name)]
+        if not model_hits:
+            continue
+        hbond_ns = gemmi.NeighborSearch(model, structure.cell, 5.0)
+        hbond_ns.populate(include_h=False)
+        hbond.annotate_rigid_hbond(
+            model_hits, structure, model_index=model_index, ns=hbond_ns)
+        hbond.annotate_hbond_competition(
+            model_hits, structure, model_index=model_index, ns=hbond_ns)
     return hits
 
 def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.NeighborSearch,
@@ -332,9 +339,10 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
 
         # --- Detection path ---
         if is_rotatable_donor and cone_mode == "auto":
-            # In candidates mode, methyl donors have no reliable H direction
-            # (C–H bonds are too weak to lock H via H-bond gate).
-            if report_xh_candidates and x_elem not in ('O', 'N', 'S'):
+            # Background-candidate export requires an observed/fixed H
+            # direction.  A cone direction selected by the detector would
+            # contaminate that background by construction.
+            if report_xh_candidates:
                 continue
 
             # Rotatable donor in auto mode: skip explicit-H track entirely.

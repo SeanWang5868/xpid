@@ -21,6 +21,8 @@ CLASH_SCALE = 0.75
 ABSOLUTE_MIN_HA = 1.30
 STRONG_HBOND_HA_MAX = 2.50
 STRONG_HBOND_DHA_MIN = 140.0
+HBOND_CONTACT_HA_MAX = 2.80
+HBOND_CONTACT_DHA_MIN = 120.0
 ACCEPTOR_MIN_OCCUPANCY = 0.20
 
 
@@ -103,17 +105,24 @@ def _dha_angle(x_pos: np.ndarray, h_pos: np.ndarray,
     return float(np.degrees(np.arccos(cosine)))
 
 
-def _is_strong_hbond(x_pos: np.ndarray, h_pos: np.ndarray,
-                     env: EnvironmentAtom) -> bool:
+def _hbond_geometry(x_pos: np.ndarray, h_pos: np.ndarray,
+                    env: EnvironmentAtom) -> Tuple[bool, bool]:
+    """Return (chemically valid H-bond contact, strong direction constraint)."""
     if env.atom.occ < ACCEPTOR_MIN_OCCUPANCY:
-        return False
+        return False, False
     if not acceptors.is_hbond_acceptor(env.residue, env.atom):
-        return False
+        return False, False
     distance = float(np.linalg.norm(env.position - h_pos))
-    if not (ABSOLUTE_MIN_HA <= distance <= STRONG_HBOND_HA_MAX):
-        return False
+    if not (ABSOLUTE_MIN_HA <= distance <= HBOND_CONTACT_HA_MAX):
+        return False, False
     angle = _dha_angle(x_pos, h_pos, env.position)
-    return angle is not None and angle >= STRONG_HBOND_DHA_MIN
+    if angle is None or angle < HBOND_CONTACT_DHA_MIN:
+        return False, False
+    strong = (
+        distance <= STRONG_HBOND_HA_MAX and
+        angle >= STRONG_HBOND_DHA_MIN
+    )
+    return True, strong
 
 
 def _hydrogen_state(x_pos: np.ndarray, h_pos: np.ndarray,
@@ -122,9 +131,10 @@ def _hydrogen_state(x_pos: np.ndarray, h_pos: np.ndarray,
     has_strong_hbond = False
     for env in environment:
         distance = float(np.linalg.norm(env.position - h_pos))
-        strong_hbond = _is_strong_hbond(x_pos, h_pos, env)
-        if strong_hbond:
-            has_strong_hbond = True
+        hbond_contact, strong_hbond = _hbond_geometry(
+            x_pos, h_pos, env)
+        if hbond_contact:
+            has_strong_hbond = has_strong_hbond or strong_hbond
             continue
 
         if distance < ABSOLUTE_MIN_HA:
@@ -215,4 +225,3 @@ def evaluate_binary(
                     conformer, h_index, metrics, use_constraint))
 
     return max(positive, key=_evidence_rank) if positive else None
-

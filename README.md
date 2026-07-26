@@ -128,7 +128,7 @@ a zero-thickness disk.
 | `--jobs N` | Number of worker processes. Default: 1. |
 | `--h-mode N` | Gemmi hydrogen mode: 0=NoChange, 1=Shift, 2=Remove, 3=ReAdd, 4=ReAddButWater, 5=ReAddKnown. |
 | `--model ID` | Model index to analyze, or `all`. |
-| `--no-cone` | Disable cone rescue. Use explicit hydrogen positions only. Rotatable donors (Ser, Thr, Tyr, Cys, Lys, methyl groups) use cone rescue by default. |
+| `--no-cone` | Disable binary cone detection and use explicit hydrogen positions only. Rotatable donors (Ser, Thr, Tyr, Cys, Lys, methyl groups) use cone detection by default. |
 | `--include-p-slab`, `--p-slab` | Include the optional P-slab system, P-slab output columns, and P-slab summary counts. |
 | `--xh-candidates` | Export all explicit X-H bonds passing Hudson/Plevin X-position filters, including direction-failed candidates. Cone virtual H is ignored in this mode. |
 | `--sym-contacts` | Detect contacts across crystallographic symmetry mates. |
@@ -194,7 +194,24 @@ directional filters.
 - Same-residue donor/π-acceptor contacts are excluded.
 - The automatic monomer-library download is stored in the user cache, not inside the installed package directory.
 - Output column names currently remain ASCII (`pi_res`, `dist_X_Pi`) to avoid breaking existing scripts. `dist_X_Pi` now means `d(X, P plane)`, not distance from X to the ring centroid.
-- Rotatable donor groups (Ser, Thr, Tyr, Cys, Lys, methyl groups) use cone rescue by default. The algorithm scans 72 hydrogen positions around the X–parent bond axis, filters by steric clash and H-bond competition, then evaluates geometry on surviving conformers. Use `--no-cone` to rely on explicit hydrogens only (appropriate for neutron diffraction or sub-1.0 Å resolution structures).
+- Rotatable donor groups (Ser, Thr, Tyr, Cys, Lys, methyl groups) use binary
+  cone detection by default. The detector keeps the observed heavy atoms fixed
+  and asks whether a chemically valid hydrogen conformer satisfies Hudson or
+  Plevin. OH/SH groups are sampled as one hydrogen through 360 degrees. CH3
+  and Lys NH3+ are sampled as complete three-hydrogen conformers through their
+  120-degree rotational period. Group-specific CCP4 bond lengths and angles
+  are used, including the non-tetrahedral Cys S-H angle.
+- Cone conformers are rejected for severe non-bonded clashes. A chemically
+  valid H-bond contact is not treated as a clash. For polar rotatable groups,
+  if one or more strong conventional H-bond conformers exist (H...A <= 2.5
+  Angstrom and X-H...A >= 140 degrees), only those complete conformers are
+  eligible for XH-pi detection. The H-bond rule constrains direction; it does
+  not automatically exclude XH-pi, and it is not an energy calculation.
+- Every reported cone row uses one self-consistent conformer: its H
+  coordinates, Hudson/Plevin labels, and geometric columns all refer to the
+  same virtual hydrogen. Use `--no-cone` to rely on explicit hydrogens only
+  (appropriate for neutron diffraction or structures whose H positions are
+  otherwise known to be experimental).
 
 ## Contact
 

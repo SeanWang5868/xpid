@@ -83,8 +83,8 @@ def annotate_hbond_competition(
     ``hbond_DHA_angle``
         D–H···A angle (°) to the strongest competitor.
     ``hbond_vs_xhpi_score``
-        Competition score: positive → H-bond preferred,
-        negative → XH-π preferred.
+        Legacy column name for a pure H-bond geometry score in [0, 1].
+        It is descriptive only and is not used by the cone detector.
 
     Returns the modified list (in-place).
     """

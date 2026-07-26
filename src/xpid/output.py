@@ -167,18 +167,24 @@ class ResultStreamer:
                 return cols
             return cols + [col for col in COORDINATE_SIMPLE_COLS if col not in cols]
 
+        after_x_chain = BASE_SIMPLE_COLS.index("X_chain") + 1
         if self.include_xh_candidates:
             cols = (
-                BASE_SIMPLE_COLS[:11] +
+                BASE_SIMPLE_COLS[:after_x_chain] +
                 CANDIDATE_SIMPLE_COLS[:1] +
                 (['is_p_slab'] if self.include_p_slab else []) +
-                BASE_SIMPLE_COLS[11:] +
+                BASE_SIMPLE_COLS[after_x_chain:] +
                 CANDIDATE_SIMPLE_COLS[1:] +
                 P_GEOMETRY_SIMPLE_COLS
             )
             return with_coordinates(cols)
         if self.include_p_slab:
-            cols = BASE_SIMPLE_COLS[:11] + P_SLAB_SIMPLE_COLS[:1] + BASE_SIMPLE_COLS[11:] + P_SLAB_SIMPLE_COLS[1:]
+            cols = (
+                BASE_SIMPLE_COLS[:after_x_chain] +
+                P_SLAB_SIMPLE_COLS[:1] +
+                BASE_SIMPLE_COLS[after_x_chain:] +
+                P_SLAB_SIMPLE_COLS[1:]
+            )
             return with_coordinates(cols)
         cols = list(BASE_SIMPLE_COLS)
         if self.include_sasa:

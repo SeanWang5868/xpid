@@ -68,6 +68,7 @@ def compute_ring_geometry(
     chain_name: str,
     res_seqid: str,
     res_name: str,
+    ring_id: str = "ring1",
 ) -> Tuple[np.ndarray, np.ndarray, float]:
     """Compute centroid, normal, and radius for an aromatic ring in a structure.
 
@@ -90,8 +91,14 @@ def compute_ring_geometry(
     if residue is None:
         raise ValueError(f"Residue {chain_name}/{res_name}/{res_seqid} not found")
 
-    # For simplicity, use the first ring definition
-    target_atoms = ring_sets[0]
+    try:
+        ring_index = int(ring_id.removeprefix("ring")) - 1
+    except (TypeError, ValueError):
+        ring_index = 0
+    if not 0 <= ring_index < len(ring_sets):
+        raise ValueError(
+            f"Ring identifier {ring_id!r} is invalid for {res_name}")
+    target_atoms = ring_sets[ring_index]
 
     # Collect atom positions
     positions = []
@@ -177,7 +184,8 @@ def validate_hit(
 
     try:
         centroid, normal, radius = compute_ring_geometry(
-            structure, pi_chain, pi_id, pi_res)
+            structure, pi_chain, pi_id, pi_res,
+            str(hit.get("pi_ring_id", "ring1")))
         x_pos, h_pos = compute_donor_coords(
             structure, X_chain, X_id, X_atom, H_atom if H_atom != "virt" else None)
     except ValueError as e:

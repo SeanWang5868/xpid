@@ -44,6 +44,8 @@ FIELDS: Tuple[Field, ...] = (
     Field("pi_chain", "str", "base", "", "Chain of π-ring residue"),
     Field("pi_res", "str", "base", "", "Residue name of π acceptor"),
     Field("pi_id", "str", "base", "", "Sequence identifier of π residue"),
+    Field("pi_ring_id", "str", "base", "", "Stable ring index within the π residue"),
+    Field("pi_ring_size", "int", "base", 0, "Number of atoms in the π ring"),
     Field("pi_ss_type", "str", "base", "", "Secondary-structure type (H/E/C)"),
     Field("pi_ss_id", "str", "base", "", "SS element identifier"),
     Field("pi_avg_b", "float", "base", 0.0, "Mean B-factor of π-ring atoms"),
@@ -119,7 +121,7 @@ FIELDS: Tuple[Field, ...] = (
     Field("hbond_acceptor_chain", "str", "hbond", None, "Chain of strongest competing acceptor"),
     Field("hbond_HA_dist", "float", "hbond", None, "H···A distance (Å)"),
     Field("hbond_DHA_angle", "float", "hbond", None, "D–H···A angle (°)"),
-    Field("hbond_vs_xhpi_score", "float", "hbond", None, "Competition score (+ → H-bond preferred)"),
+    Field("hbond_vs_xhpi_score", "float", "hbond", None, "Legacy name for pure H-bond geometry score (0–1)"),
 
     # -- XH-candidate diagnostics (conditional) -----------------------------
     Field("is_xh_candidate", "int", "candidate", 0, "1 if exported as X-H candidate"),

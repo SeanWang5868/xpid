@@ -120,6 +120,37 @@ def test_valid_short_hbond_is_not_rejected_as_steric_clash():
     assert constrained == [conformer]
 
 
+def test_nonlocking_hbond_contact_is_not_a_steric_clash():
+    definition = donors.get_definition("SER", "OG")
+    parent = np.array([0.0, 0.0, 0.0])
+    x_pos = np.array([1.42, 0.0, 0.0])
+    conformer = cone.generate_conformers(parent, x_pos, definition)[0]
+    h_pos = conformer.hydrogen_positions[0]
+
+    # Construct a 1.8 Å H...O contact at a 130° D-H...A angle.  It is a
+    # chemically valid contact, but deliberately below the 140° lock cutoff.
+    h_to_x = (x_pos - h_pos) / np.linalg.norm(x_pos - h_pos)
+    perpendicular = np.cross(h_to_x, np.array([0.0, 0.0, 1.0]))
+    if np.linalg.norm(perpendicular) < 1e-8:
+        perpendicular = np.cross(h_to_x, np.array([0.0, 1.0, 0.0]))
+    perpendicular /= np.linalg.norm(perpendicular)
+    angle = np.radians(130.0)
+    h_to_a = np.cos(angle) * h_to_x + np.sin(angle) * perpendicular
+    acceptor_pos = h_pos + 1.8 * h_to_a
+
+    oxygen = _atom("OD1", "O", tuple(acceptor_pos))
+    asp = _residue("ASP", [oxygen])
+    environment = [
+        cone.EnvironmentAtom(acceptor_pos, oxygen, asp, "B", 0)
+    ]
+
+    valid, constrained = cone.filter_conformers(
+        [conformer], x_pos, environment)
+
+    assert valid == [conformer]
+    assert constrained == []
+
+
 def test_strong_hbond_direction_can_prevent_single_h_xhpi():
     definition = donors.get_definition("SER", "OG")
     parent = np.array([1.42, 0.0, 3.0])
