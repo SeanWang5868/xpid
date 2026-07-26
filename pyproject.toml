@@ -47,3 +47,6 @@ xpid = ["monomers/*"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["test"]
+markers = [
+    "slow: integration or regression tests that use real structures",
+]

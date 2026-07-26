@@ -3,7 +3,9 @@
 import math
 import numpy as np
 import gemmi
-from xpid import sasa, cooperativity, hbond, core
+from xpid import (
+    sasa, cooperativity, hbond_annotations as hbond, core,
+)
 
 
 # ---------------------------------------------------------------------------

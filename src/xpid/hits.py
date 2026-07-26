@@ -3,16 +3,16 @@ hits.py
 Hit recording, deduplication, and helper functions.
 """
 import gemmi
-import logging
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple, Set
 
 from . import config
+from . import aromatic_rings
 from . import geometry
 from . import ss
 from . import sasa
-from . import rings
-from . import systems
+from . import ring_conformers
+from . import xhpi_criteria
 from . import schema
 
 
@@ -105,7 +105,7 @@ def _deduplicate_hits(hits: List[Dict[str, Any]], prefer_directional: bool = Tru
 
 
 
-def _record_hit(hits: List[Dict[str, Any]], rctx: "rings._RingContext",
+def _record_hit(hits: List[Dict[str, Any]], rctx: "ring_conformers.RingContext",
                 x_cra, x_atom, h_name: str, dist: float,
                 dist_x_centroid: float, x_pos: np.ndarray, proj: Optional[float],
                 metrics: Dict[str, Any],
@@ -133,7 +133,8 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "rings._RingContext",
     is_trp_5ring = int(rctx.residue.name == 'TRP' and rctx.ring_size == 5)
     is_pi_pi_tshaped = 0
 
-    donor_rings = config.get_aromatic_rings(x_cra.residue.name)
+    donor_rings = aromatic_rings.get_aromatic_rings(
+        x_cra.residue.name)
     for d_ring_atoms in donor_rings:
         d_pi_atoms = [a for a in x_cra.residue if a.name in d_ring_atoms]
         if len(d_pi_atoms) != len(d_ring_atoms):
@@ -187,8 +188,8 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "rings._RingContext",
         '_combined_occ': float(combined_occ),
         '_pi_ring_key': rctx.mode,
         '_pi_alt': rctx.pi_alt,
-        '_X_alt': rings._altloc(x_atom),
-        '_H_alt': rings._altloc(h_atom) if h_atom is not None else "",
+        '_X_alt': ring_conformers._altloc(x_atom),
+        '_H_alt': ring_conformers._altloc(h_atom) if h_atom is not None else "",
         'hbond_relation': hbond_relation,
     }
 
@@ -215,12 +216,15 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "rings._RingContext",
     })
 
     if include_coordinates:
-        canonical_normal = systems._canonical_unit_normal(rctx.pi_normal)
+        canonical_normal = xhpi_criteria._canonical_unit_normal(
+            rctx.pi_normal)
         hit.update({
             'pi_normal_x': _round_float(canonical_normal[0], 6) if canonical_normal is not None else None,
             'pi_normal_y': _round_float(canonical_normal[1], 6) if canonical_normal is not None else None,
             'pi_normal_z': _round_float(canonical_normal[2], 6) if canonical_normal is not None else None,
-            'X_side_of_pi': systems._side_of_plane(x_pos, rctx.pi_center_arr, canonical_normal) if canonical_normal is not None else 0,
+            'X_side_of_pi': xhpi_criteria._side_of_plane(
+                x_pos, rctx.pi_center_arr, canonical_normal
+            ) if canonical_normal is not None else 0,
         })
 
     if sasa_map:
@@ -265,39 +269,3 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "rings._RingContext",
         hit.update(p_geometry)
 
     hits.append(hit)
-
-
-def _merge_cone_system_metrics(legacy_best: Optional[Dict[str, Any]],
-                               p_slab_best: Optional[Dict[str, Any]],
-                               needs_legacy: bool,
-                               needs_p_slab: bool) -> Optional[Dict[str, Any]]:
-    """Merge independently selected cone candidates into one reported virtual hit."""
-    if legacy_best is None and p_slab_best is None:
-        return None
-
-    base = dict(legacy_best if legacy_best is not None else p_slab_best)
-
-    base['is_hudson'] = int(needs_legacy and legacy_best is not None and legacy_best['is_hudson'])
-    base['is_plevin'] = int(needs_legacy and legacy_best is not None and legacy_best['is_plevin'])
-    base['is_p_slab'] = int(needs_p_slab and p_slab_best is not None and p_slab_best['is_p_slab'])
-
-    if p_slab_best is not None:
-        base['h_proj_dist'] = p_slab_best['h_proj_dist']
-        base['H_ray_t'] = p_slab_best['H_ray_t']
-        base['H_ray_entry_dist'] = p_slab_best['H_ray_entry_dist']
-        base['h_plane_proj_dist'] = p_slab_best['h_plane_proj_dist']
-        base['H_plane_t'] = p_slab_best['H_plane_t']
-        base['H_plane_entry_dist'] = p_slab_best['H_plane_entry_dist']
-        base['delta_h_proj_dist'] = p_slab_best['delta_h_proj_dist']
-
-    if legacy_best is not None:
-        base['theta'] = legacy_best['theta']
-        base['angle_XPCN'] = legacy_best['angle_XPCN']
-        base['angle_XH_Pi'] = legacy_best['angle_XH_Pi']
-
-    return base
-
-
-def _pos_to_arr(pos: gemmi.Position) -> np.ndarray:
-    """Convert gemmi.Position to numpy array without intermediate list."""
-    return np.array([pos.x, pos.y, pos.z])

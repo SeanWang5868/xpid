@@ -11,15 +11,16 @@ from pathlib import Path
 from typing import List, Dict, Any, NamedTuple, Optional
 
 try:
-    from xpid import prep, core, config, structure_io
+    from xpid import hydrogen_prep, detector, config, structure_io
     from xpid.output import ResultStreamer
     from xpid.resolver import gather_inputs
 except ImportError:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from xpid import prep, core, config, structure_io
+    from xpid import hydrogen_prep, detector, config, structure_io
     from xpid.output import ResultStreamer
     from xpid.resolver import gather_inputs
 from xpid import provenance
+from xpid import monlib
 
 
 # ---------------------------------------------------------------------------
@@ -138,12 +139,12 @@ def process_one_file(task: TaskPacket):
             return f"Empty or invalid structure: {task.filepath}", 0, [], None, empty_system_summary(task.include_p_slab)
 
         if task.h_mode > 0:
-            structure = prep.add_hydrogens_memory(
+            structure = hydrogen_prep.add_hydrogens_memory(
                 structure, h_change_val=task.h_mode)
             if structure is None:
                 return f"Hydrogen addition failed: {task.filepath}", 0, [], None, empty_system_summary(task.include_p_slab)
 
-        results = core.detect_interactions_in_structure(
+        results = detector.detect_interactions_in_structure(
             structure,
             pdb_name=pdb_code,
             filter_pi=task.filters.get('pi'),
@@ -334,7 +335,9 @@ def main():
     logger.info(f"Format      : {args.file_type.upper()} "
                 f"({'Separate Files' if args.separate else 'Merged File'})")
     logger.info(f"H-Mode      : {args.h_mode} ({h_mode_desc})")
-    logger.info(f"Monomer Lib : {config.DEFAULT_MON_LIB_PATH}")
+    monomer_library_path = (
+        monlib.find_installed_monomer_library() or "not installed")
+    logger.info("Monomer Lib : %s", monomer_library_path)
     logger.info(f"Cone Mode   : {cone_mode} ({cone_status})")
     logger.info(f"P-slab      : {p_slab_status}")
     logger.info(f"X-H Export  : {candidate_status}")
@@ -348,7 +351,11 @@ def main():
     recovery_status = "Enabled for single direct file" if allow_remote_recovery else "Disabled for batch input"
     logger.info(f"RCSB Rescue : {recovery_status}")
     if args.provenance:
-        meta = provenance.build_metadata(args, output_dir, args.output_name, len(files))
+        provenance_output = (
+            output_dir if args.separate else
+            output_dir / f"{args.output_name}.{args.file_type.lower()}")
+        meta = provenance.build_metadata(
+            args, provenance_output, monomer_library_path, len(files))
         provenance.write_metadata(meta, output_dir, args.output_name)
         _meta_path = output_dir / f"{args.output_name}_metadata.json"
         logger.info(f"[PROVENANCE] Written to {_meta_path}")

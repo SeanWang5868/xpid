@@ -91,7 +91,7 @@ def test_any_hydrogen_clash_invalidates_complete_methyl_conformer():
             conformer.hydrogen_positions[1], blocker, ligand, "B", 0)
     ]
 
-    valid, constrained = cone.filter_conformers(
+    valid, constrained = cone.classify_conformers(
         [conformer], x_pos, environment)
 
     assert valid == []
@@ -113,7 +113,7 @@ def test_valid_short_hbond_is_not_rejected_as_steric_clash():
         cone.EnvironmentAtom(acceptor_pos, oxygen, asp, "B", 0)
     ]
 
-    valid, constrained = cone.filter_conformers(
+    valid, constrained = cone.classify_conformers(
         [conformer], x_pos, environment)
 
     assert valid == [conformer]
@@ -144,7 +144,7 @@ def test_nonlocking_hbond_contact_is_not_a_steric_clash():
         cone.EnvironmentAtom(acceptor_pos, oxygen, asp, "B", 0)
     ]
 
-    valid, constrained = cone.filter_conformers(
+    valid, constrained = cone.classify_conformers(
         [conformer], x_pos, environment)
 
     assert valid == [conformer]

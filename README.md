@@ -48,6 +48,9 @@ for hit in results:
     print(hit["pdb"], hit["pi_res"], hit["X_res"], hit["dist_X_Pi"])
 ```
 
+Analysis failures raise `XPIDError`; use `detect(..., on_error="empty")` only
+when legacy empty-on-error behavior is explicitly desired.
+
 Output column names currently remain ASCII for compatibility with existing scripts.
 
 ## Demo Notebook
@@ -128,7 +131,7 @@ a zero-thickness disk.
 | `--jobs N` | Number of worker processes. Default: 1. |
 | `--h-mode N` | Gemmi hydrogen mode: 0=NoChange, 1=Shift, 2=Remove, 3=ReAdd, 4=ReAddButWater, 5=ReAddKnown. |
 | `--model ID` | Model index to analyze, or `all`. |
-| `--no-cone` | Disable binary cone detection and use explicit hydrogen positions only. Rotatable donors (Ser, Thr, Tyr, Cys, Lys, methyl groups) use cone detection by default. |
+| `--no-cone` | Disable binary cone detection and use explicit hydrogen positions only. Rotatable Ser, Thr, Tyr, Cys and methyl groups use cone detection by default. Cation–π groups such as Lys/Arg are excluded by design. |
 | `--include-p-slab`, `--p-slab` | Include the optional P-slab system, P-slab output columns, and P-slab summary counts. |
 | `--xh-candidates` | Export all explicit X-H bonds passing Hudson/Plevin X-position filters, including direction-failed candidates. Cone virtual H is ignored in this mode. |
 | `--sym-contacts` | Detect contacts across crystallographic symmetry mates. |
@@ -140,7 +143,7 @@ a zero-thickness disk.
 | Argument | Description |
 | :--- | :--- |
 | `--pi-res` | Limit π-acceptor residues, for example `TRP,TYR`. |
-| `--donor-res` | Limit donor residues, for example `LYS,ARG`. |
+| `--donor-res` | Limit donor residues, for example `SER,THR`. Cation–π Lys/Arg groups are excluded by design. |
 | `--donor-atom` | Limit donor element symbols or exact atom names, for example `N,O,C` or `OG,NZ`. |
 | `--residue-pair SEL1 SEL2` | Restrict detection to XH–π interactions between two residue selections, for example `--residue-pair //A/12 //A/18`. Either selected residue can be the π acceptor; all donor atoms on the opposite residue are considered. |
 | `--min-occ N` | Minimum combined occupancy to report. Default: 0.0. |

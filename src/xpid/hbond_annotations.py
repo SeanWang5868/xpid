@@ -1,0 +1,282 @@
+"""Conventional hydrogen-bond context annotations for XH–π hits.
+
+For each detected XH–π interaction, this module reports nearby conventional
+hydrogen-bond geometry as descriptive context. These annotations never veto
+or create an XH–π detection.
+"""
+from __future__ import annotations
+
+from typing import Dict, List, Any, Optional, Tuple
+
+import gemmi
+import numpy as np
+
+from . import hbond_acceptors
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+HBOND_SEARCH_RADIUS = 3.0       # Å — search for acceptors around H
+HBOND_HA_MAX = 2.8              # Å — max H···A distance for competing H-bond
+HBOND_DHA_MIN = 120.0           # ° — min D–H···A angle for competing H-bond
+# ---------------------------------------------------------------------------
+# Scoring
+# ---------------------------------------------------------------------------
+
+
+def _competition_score(
+    d_ha: float,
+    angle_dha: float,
+    dist_x_pi: float = None,
+    angle_xh_pi: Optional[float] = None,
+) -> float:
+    """Pure H-bond geometry quality score (0–1, higher = stronger).
+
+    dist_score  = 1 - d_ha / 2.8     (0 A → 1.0, 2.8 A → 0.0)
+    angle_score = angle_dha / 180.0   (180 deg → 1.0)
+
+    *dist_x_pi* and *angle_xh_pi* accepted for API compatibility
+    but no longer used — this is a pure H-bond metric.
+    """
+    dist_score = 1.0 - d_ha / HBOND_HA_MAX
+    angle_score = angle_dha / 180.0
+    return dist_score * angle_score
+
+
+
+# ---------------------------------------------------------------------------
+# Main annotation function
+# ---------------------------------------------------------------------------
+
+
+def annotate_cone_hbond_context(
+    hits: List[Dict[str, Any]],
+    structure: gemmi.Structure,
+    model_index: int = 0,
+    ns: Optional[gemmi.NeighborSearch] = None,
+) -> List[Dict[str, Any]]:
+    """Annotate each cone hit with conventional H-bond context.
+
+    H positions are retained internally for every hit. The strongest nearby
+    conventional H-bond geometry is reported without changing the binary
+    XH–π result.
+
+    Appends the following columns:
+
+    ``hbond_competing``
+        0/1 — whether a competing H-bond acceptor was found within cutoffs.
+    ``hbond_acceptor_atom``
+        Atom name of the strongest competing acceptor.
+    ``hbond_acceptor_res``
+        Residue name of the strongest competing acceptor.
+    ``hbond_acceptor_chain``
+        Chain of the strongest competing acceptor.
+    ``hbond_HA_dist``
+        H···A distance (Å) to the strongest competitor.
+    ``hbond_DHA_angle``
+        D–H···A angle (°) to the strongest competitor.
+    ``hbond_vs_xhpi_score``
+        Legacy column name for a pure H-bond geometry score in [0, 1].
+        It is descriptive only and is not used by the cone detector.
+
+    Returns the modified list (in-place).
+    """
+    if len(structure) == 0 or model_index >= len(structure):
+        return hits
+
+    if ns is None:
+        model = structure[model_index]
+        ns = gemmi.NeighborSearch(model, structure.cell, 5.0)
+        ns.populate(include_h=False)
+    else:
+        model = structure[model_index]
+
+    for hit in hits:
+        # Extract H atom position
+        hx = hit.get("H_xyz_x")
+        hy = hit.get("H_xyz_y")
+        hz = hit.get("H_xyz_z")
+
+        if hx is None or hy is None or hz is None:
+            _set_no_competition(hit)
+            continue
+
+        h_pos = gemmi.Position(hx, hy, hz)
+
+        # Extract X atom position for angle calculation
+        xx = hit.get("X_xyz_x")
+        xy = hit.get("X_xyz_y")
+        xz = hit.get("X_xyz_z")
+
+        if xx is None:
+            _set_no_competition(hit)
+            continue
+
+        x_pos_arr = np.array([xx, xy, xz])
+        h_pos_arr = np.array([hx, hy, hz])
+
+        # Get pi-plane distance for scoring
+        dist_x_pi = float(hit.get("dist_X_Pi", 4.5))
+        angle_xh_pi = hit.get("angle_XH_Pi")
+
+        # Exclude atoms from the donor residue itself
+        donor_chain = hit.get("X_chain", "")
+        donor_res = hit.get("X_res", "")
+        donor_id = str(hit.get("X_id", ""))
+
+        # Search for nearby atoms
+        best_acceptor = None
+        best_score = None
+
+        marks = ns.find_atoms(h_pos, radius=HBOND_SEARCH_RADIUS)
+
+        for mark in marks:
+            cra = mark.to_cra(model)
+            acceptor = cra.atom
+
+            if not hbond_acceptors.is_hbond_acceptor(
+                    cra.residue, acceptor):
+                continue
+
+            # Skip atoms from the same residue as the donor
+            if (cra.chain.name == donor_chain and
+                cra.residue.name == donor_res and
+                str(cra.residue.seqid).strip() == donor_id):
+                continue
+
+            # Compute H-bond geometry
+            a_pos_arr = np.array([mark.pos.x, mark.pos.y, mark.pos.z])
+            d_ha = float(np.linalg.norm(a_pos_arr - h_pos_arr))
+
+            if d_ha > HBOND_HA_MAX:
+                continue
+
+            vec_hd = x_pos_arr - h_pos_arr
+            vec_ha = a_pos_arr - h_pos_arr
+            norm_hd = np.linalg.norm(vec_hd)
+            norm_ha = np.linalg.norm(vec_ha)
+
+            if norm_hd == 0 or norm_ha == 0:
+                continue
+
+            cos_angle = np.dot(vec_hd, vec_ha) / (norm_hd * norm_ha)
+            angle_dha = float(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
+
+            if angle_dha < HBOND_DHA_MIN:
+                continue
+
+            score = _competition_score(d_ha, angle_dha, dist_x_pi, angle_xh_pi)
+
+            if best_score is None or score > best_score:
+                best_score = score
+                best_acceptor = (cra, d_ha, angle_dha, score)
+
+        if best_acceptor is not None:
+            cra, d_ha, angle_dha, score = best_acceptor
+            hit["hbond_competing"] = 1
+            hit["hbond_acceptor_atom"] = cra.atom.name
+            hit["hbond_acceptor_res"] = cra.residue.name
+            hit["hbond_acceptor_chain"] = cra.chain.name
+            hit["hbond_HA_dist"] = round(d_ha, 3)
+            hit["hbond_DHA_angle"] = round(angle_dha, 2)
+            hit["hbond_vs_xhpi_score"] = round(score, 4)
+        else:
+            _set_no_competition(hit)
+
+    return hits
+
+
+
+
+def annotate_explicit_hbond_context(
+        hits: List[Dict[str, Any]], structure: gemmi.Structure,
+        model_index: int = 0,
+        ns: Optional[gemmi.NeighborSearch] = None) -> List[Dict[str, Any]]:
+    """Annotate rigid-donor hits with a binary H-bond flag only.
+
+    For rigid donors (backbone N-H, Trp NE1, His, Arg, Asn/Gln sidechains),
+    the hydrogen cannot rotate, so there is no "competition" — it can
+    simultaneously participate in XH-π and a conventional H-bond.
+    This function only records whether a H-bond acceptor is present.
+    """
+    if len(structure) == 0 or model_index >= len(structure):
+        return hits
+
+    if ns is None:
+        model = structure[model_index]
+        ns = gemmi.NeighborSearch(model, structure.cell, 5.0)
+        ns.populate(include_h=False)
+    else:
+        model = structure[model_index]
+
+    for hit in hits:
+        # Cone-virtual hits are annotated by annotate_cone_hbond_context().
+        if hit.get("H_source") == "cone_virtual":
+            hit["hbond_also_hbonded"] = 0
+            continue
+
+        hx = hit.get("H_xyz_x")
+        hy = hit.get("H_xyz_y")
+        hz = hit.get("H_xyz_z")
+        if hx is None:
+            hit["hbond_also_hbonded"] = 0
+            continue
+
+        h_pos = gemmi.Position(hx, hy, hz)
+        xx = hit.get("X_xyz_x")
+        if xx is None:
+            hit["hbond_also_hbonded"] = 0
+            continue
+
+        x_pos_arr = np.array([xx, hit.get("X_xyz_y", 0), hit.get("X_xyz_z", 0)])
+        h_pos_arr = np.array([hx, hy, hz])
+
+        donor_chain = hit.get("X_chain", "")
+        donor_res = hit.get("X_res", "")
+        donor_id = str(hit.get("X_id", ""))
+
+        marks = ns.find_atoms(h_pos, radius=HBOND_SEARCH_RADIUS)
+        found = False
+
+        for mark in marks:
+            cra = mark.to_cra(model)
+            if not hbond_acceptors.is_hbond_acceptor(
+                    cra.residue, cra.atom):
+                continue
+            if (cra.chain.name == donor_chain and
+                cra.residue.name == donor_res and
+                str(cra.residue.seqid).strip() == donor_id):
+                continue
+
+            a_pos_arr = np.array([mark.pos.x, mark.pos.y, mark.pos.z])
+            d_ha = float(np.linalg.norm(a_pos_arr - h_pos_arr))
+            if d_ha > HBOND_HA_MAX:
+                continue
+
+            vec_hd = x_pos_arr - h_pos_arr
+            vec_ha = a_pos_arr - h_pos_arr
+            norm_hd = np.linalg.norm(vec_hd)
+            norm_ha = np.linalg.norm(vec_ha)
+            if norm_hd == 0 or norm_ha == 0:
+                continue
+
+            cos_angle = np.dot(vec_hd, vec_ha) / (norm_hd * norm_ha)
+            angle_dha = float(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
+            if angle_dha >= HBOND_DHA_MIN:
+                found = True
+                break
+
+        hit["hbond_also_hbonded"] = 1 if found else 0
+
+    return hits
+
+def _set_no_competition(hit: Dict[str, Any]) -> None:
+    """Fill competition columns with fallback values."""
+    hit["hbond_competing"] = 0
+    hit["hbond_acceptor_atom"] = None
+    hit["hbond_acceptor_res"] = None
+    hit["hbond_acceptor_chain"] = None
+    hit["hbond_HA_dist"] = None
+    hit["hbond_DHA_angle"] = None
+    hit["hbond_vs_xhpi_score"] = None

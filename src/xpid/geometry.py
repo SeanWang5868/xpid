@@ -5,7 +5,6 @@ Geometric calculations for Hudson, Plevin, P-slab, and cone alignment.
 import numpy as np
 import gemmi
 from typing import Tuple, Optional, List
-from . import config
 
 EPSILON = 1e-8
 
@@ -189,55 +188,6 @@ def calculate_projection_dist(normal: np.ndarray, pi_center: np.ndarray, x_pos: 
     if projection_point is None:
         return None
     return calculate_p_offset(projection_point, pi_center)
-
-
-def generate_rotated_hydrogens(parent_pos: np.ndarray, 
-                               x_pos: np.ndarray, 
-                               element: str, 
-                               env_coords: np.ndarray = None, 
-                               clash_cutoff: float = 2.0,
-                               num_samples: int = 72) -> list:
-    """Vectorized cone hydrogen generator with steric clash filtering."""
-    axis = x_pos - parent_pos
-    norm_axis = np.linalg.norm(axis)
-    if norm_axis == 0: 
-        return []
-    u = axis / norm_axis 
-    
-    arbitrary_vec = np.array([1.0, 0.0, 0.0])
-    if np.abs(np.dot(u, arbitrary_vec)) > 0.99:
-        arbitrary_vec = np.array([0.0, 1.0, 0.0])
-    
-    v = np.cross(u, arbitrary_vec)
-    v = v / np.linalg.norm(v)
-    w = np.cross(u, v)
-    
-    bond_length = config.BOND_LENGTHS.get(element, 1.09)
-    theta_rad = np.radians(config.TETRAHEDRAL_ANGLE)
-    
-    h_proj_u = bond_length * np.cos(np.pi - theta_rad)
-    h_radius = bond_length * np.sin(np.pi - theta_rad)
-    
-    # Vectorized: generate all H positions at once
-    angles = np.linspace(0, 2 * np.pi, num_samples, endpoint=False)
-    cos_phi = np.cos(angles)  # (N,)
-    sin_phi = np.sin(angles)  # (N,)
-    
-    # h_positions shape: (N, 3)
-    h_positions = (x_pos + h_proj_u * u + 
-                   h_radius * cos_phi[:, None] * v + 
-                   h_radius * sin_phi[:, None] * w)
-    
-    # Vectorized clash check
-    if env_coords is not None and len(env_coords) > 0:
-        # diffs shape: (N, M, 3) where M = number of env atoms
-        diffs = h_positions[:, None, :] - env_coords[None, :, :]
-        dists = np.linalg.norm(diffs, axis=2)  # (N, M)
-        min_dists = dists.min(axis=1)  # (N,)
-        mask = min_dists >= clash_cutoff
-        h_positions = h_positions[mask]
-    
-    return [h_positions[i] for i in range(len(h_positions))]
 
 
 def calculate_pi_pi_geometry(center1: np.ndarray, normal1: np.ndarray,

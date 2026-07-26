@@ -7,9 +7,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import gemmi
 import numpy as np
 
-from . import acceptors
-from . import donors
-from . import systems
+from . import hbond_acceptors
+from . import rotatable_groups
+from . import xhpi_criteria
 
 
 VDW_RADII = {
@@ -46,7 +46,6 @@ class PositiveEvidence:
     conformer: HydrogenConformer
     hydrogen_index: int
     metrics: Dict[str, Any]
-    hbond_constrained: bool
     hbond_relation: str = "none"
 
 
@@ -67,7 +66,7 @@ def _orthonormal_frame(parent_pos: np.ndarray,
 
 
 def generate_conformers(parent_pos: np.ndarray, x_pos: np.ndarray,
-                        definition: donors.DonorDefinition,
+                        definition: rotatable_groups.RotatableGroupDefinition,
                         step_degrees: int = 1) -> List[HydrogenConformer]:
     """Generate complete one- or three-hydrogen rotational conformers."""
     frame = _orthonormal_frame(parent_pos, x_pos)
@@ -111,7 +110,7 @@ def _hbond_geometry(x_pos: np.ndarray, h_pos: np.ndarray,
     """Return (chemically valid H-bond contact, strong direction constraint)."""
     if env.atom.occ < ACCEPTOR_MIN_OCCUPANCY:
         return False, False
-    if not acceptors.is_hbond_acceptor(env.residue, env.atom):
+    if not hbond_acceptors.is_hbond_acceptor(env.residue, env.atom):
         return False, False
     distance = float(np.linalg.norm(env.position - h_pos))
     if not (ABSOLUTE_MIN_HA <= distance <= HBOND_CONTACT_HA_MAX):
@@ -191,14 +190,14 @@ def _candidate_hbond_relation(
     return "none"
 
 
-def filter_conformers(
+def classify_conformers(
     conformers: Sequence[HydrogenConformer],
     x_pos: np.ndarray,
     environment: Sequence[EnvironmentAtom],
 ) -> Tuple[List[HydrogenConformer], List[HydrogenConformer]]:
-    """Return (sterically valid, strong-H-bond-compatible) conformers."""
-    valid: List[HydrogenConformer] = []
-    constrained: List[HydrogenConformer] = []
+    """Return sterically allowed and H-bond-capable conformers."""
+    sterically_allowed: List[HydrogenConformer] = []
+    hbond_capable: List[HydrogenConformer] = []
 
     for conformer in conformers:
         conformer_valid = True
@@ -210,10 +209,10 @@ def filter_conformers(
                 break
             conformer_hbond = conformer_hbond or h_hbond
         if conformer_valid:
-            valid.append(conformer)
+            sterically_allowed.append(conformer)
             if conformer_hbond:
-                constrained.append(conformer)
-    return valid, constrained
+                hbond_capable.append(conformer)
+    return sterically_allowed, hbond_capable
 
 
 def _evidence_rank(evidence: PositiveEvidence) -> tuple:
@@ -233,7 +232,7 @@ def _evidence_rank(evidence: PositiveEvidence) -> tuple:
 
 def evaluate_binary(
     rctx,
-    definition: donors.DonorDefinition,
+    definition: rotatable_groups.RotatableGroupDefinition,
     parent_pos: np.ndarray,
     x_pos: np.ndarray,
     x_element: str,
@@ -249,17 +248,17 @@ def evaluate_binary(
     retained as descriptive context and never changes the binary result.
     """
     conformers = generate_conformers(parent_pos, x_pos, definition)
-    valid, constrained = filter_conformers(conformers, x_pos, environment)
-    if not valid:
+    sterically_allowed, hbond_capable = classify_conformers(
+        conformers, x_pos, environment)
+    if not sterically_allowed:
         return None
 
-    allowed = valid
-    alternative_hbond_exists = bool(constrained)
+    alternative_hbond_exists = bool(hbond_capable)
 
     positive: List[PositiveEvidence] = []
-    for conformer in allowed:
+    for conformer in sterically_allowed:
         for h_index, h_pos in enumerate(conformer.hydrogen_positions):
-            metrics = systems._evaluate_systems(
+            metrics = xhpi_criteria.evaluate_xhpi_geometry(
                 rctx, x_element, x_pos, h_pos,
                 dist_x_plane, dist_x_centroid, proj_dist,
             )
@@ -269,6 +268,6 @@ def evaluate_binary(
                     conformer, h_index, x_pos, environment,
                     alternative_hbond_exists)
                 positive.append(PositiveEvidence(
-                    conformer, h_index, metrics, False, relation))
+                    conformer, h_index, metrics, relation))
 
     return max(positive, key=_evidence_rank) if positive else None

@@ -3,7 +3,11 @@ import inspect
 from pathlib import Path
 
 import gemmi
-from xpid import cli, core, config, detect, output, prep, resolver
+import pytest
+from xpid import (
+    XPIDError, api, cli, core, config, detect, hydrogen_prep as prep,
+    monomer_bonds, output, provenance, resolver,
+)
 
 
 def _atom(name, element, xyz, b_iso=10.0, occ=1.0, altloc="\0"):
@@ -112,6 +116,33 @@ def test_api_and_core_default_disable_cone_and_p_slab():
     assert core_sig.parameters["report_xh_candidates"].default is False
     assert core_sig.parameters["include_coordinates"].default is False
     assert core_sig.parameters["residue_pair"].default is None
+
+
+def test_api_distinguishes_failure_from_empty_result(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        api.structure_io, "read_structure",
+        lambda path: (_ for _ in ()).throw(ValueError("bad structure")),
+    )
+
+    with pytest.raises(XPIDError, match="bad structure"):
+        detect(tmp_path / "bad.cif")
+    assert detect(tmp_path / "bad.cif", on_error="empty") == []
+
+
+def test_provenance_records_real_cone_mode_and_paths(tmp_path):
+    args = cli._build_parser().parse_args(["dummy.cif"])
+    output_path = tmp_path / "results.csv"
+
+    metadata = provenance.build_metadata(
+        args, output_path, "/monomers", file_count=3)
+
+    assert metadata["output"] == str(output_path.resolve())
+    assert metadata["monomer_library"] == "/monomers"
+    assert metadata["parameters"]["cone_mode"] == "auto"
+    args.no_cone = True
+    metadata = provenance.build_metadata(
+        args, output_path, "/monomers", file_count=3)
+    assert metadata["parameters"]["cone_mode"] == "none"
 
 
 def test_cli_parser_default_cone_auto_and_p_slab_off():
@@ -356,8 +387,8 @@ def test_dictionary_bonded_hydrogens_reject_unbonded_neighbor(monkeypatch):
     chain.add_residue(bma)
 
     monkeypatch.setattr(
-        config,
-        "get_bonded_hydrogens",
+        monomer_bonds,
+        "get_bonded_hydrogen_names",
         lambda res, atom: {"HO6"} if (res, atom) == ("BMA", "O6") else set(),
     )
 
@@ -589,46 +620,144 @@ def test_coordinate_output_includes_h_xyz_pi_normal_and_x_side():
     assert hit["X_side_of_pi"] == 1
 
 
-def test_hydrogen_merge_preserves_residues_with_experimental_h(monkeypatch):
+def test_hydrogen_modes_are_applied_to_every_model_and_synchronized(monkeypatch):
     st = gemmi.Structure()
     st.cell = gemmi.UnitCell(30, 30, 30, 90, 90, 90)
+    for model_number in ("1", "2"):
+        model = gemmi.Model(model_number)
+        chain = gemmi.Chain("A")
+        ser = gemmi.Residue()
+        ser.name = "SER"
+        ser.seqid = _seqid(1)
+        ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.0)))
+        ser.add_atom(_atom("HG", "H", (9.0, 9.0, 9.0)))
+        chain.add_residue(ser)
+        model.add_chain(chain)
+        st.add_model(model)
+
+    monkeypatch.setattr(prep, "_get_shared_monlib", lambda codes: gemmi.MonLib())
+    calls = []
+
+    def fake_prepare(working, monlib, h_change, model_index):
+        calls.append((h_change, model_index))
+        residue = working[model_index][0][0]
+        for index in reversed(range(len(residue))):
+            if residue[index].element.name.upper() in {"H", "D"}:
+                del residue[index]
+        residue.add_atom(_atom("HX", "H", (float(model_index), 1.0, 1.0)))
+
+    monkeypatch.setattr(prep, "_prepare_topology_with_retries", fake_prepare)
+
+    prep.add_hydrogens_memory(st, h_change_val=3)
+
+    assert calls == [
+        (gemmi.HydrogenChange.ReAdd, 0),
+        (gemmi.HydrogenChange.ReAdd, 1),
+    ]
+    for model_index in range(2):
+        hydrogens = [
+            atom for atom in st[model_index][0][0]
+            if atom.element.name.upper() == "H"
+        ]
+        assert len(hydrogens) == 1
+        assert hydrogens[0].name == "HX"
+        assert hydrogens[0].pos.x == float(model_index)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        (1, gemmi.HydrogenChange.Shift),
+        (2, gemmi.HydrogenChange.Remove),
+        (3, gemmi.HydrogenChange.ReAdd),
+        (4, gemmi.HydrogenChange.ReAddButWater),
+        (5, gemmi.HydrogenChange.ReAddKnown),
+    ],
+)
+def test_hydrogen_mode_numbers_match_gemmi(monkeypatch, mode, expected):
+    st = gemmi.Structure()
     model = gemmi.Model("1")
     chain = gemmi.Chain("A")
-
-    ser = gemmi.Residue()
-    ser.name = "SER"
-    ser.seqid = _seqid(1)
-    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.0)))
-    ser.add_atom(_atom("HG", "H", (9.0, 9.0, 9.0)))
-    chain.add_residue(ser)
-
-    thr = gemmi.Residue()
-    thr.name = "THR"
-    thr.seqid = _seqid(2)
-    thr.add_atom(_atom("OG1", "O", (1.0, 0.0, 3.0)))
-    chain.add_residue(thr)
-
+    residue = gemmi.Residue()
+    residue.name = "SER"
+    residue.seqid = _seqid(1)
+    residue.add_atom(_atom("OG", "O", (0.0, 0.0, 0.0)))
+    chain.add_residue(residue)
     model.add_chain(chain)
     st.add_model(model)
 
     monkeypatch.setattr(prep, "_get_shared_monlib", lambda codes: gemmi.MonLib())
+    calls = []
+    monkeypatch.setattr(
+        prep,
+        "_prepare_topology_with_retries",
+        lambda working, monlib, h_change, model_index:
+            calls.append((h_change, model_index)),
+    )
 
-    def fake_prepare(working, monlib, h_change_val):
-        for residue in working[0][0]:
-            residue.add_atom(_atom("HX", "H", (1.0, 1.0, 1.0)))
+    prep.add_hydrogens_memory(st, h_change_val=mode)
 
-    monkeypatch.setattr(prep, "_prepare_topology_with_retries", fake_prepare)
+    assert calls == [(expected, 0)]
 
-    prep.add_hydrogens_memory(st)
 
-    ser_h = [atom for atom in st[0][0][0] if atom.element.name.upper() == "H"]
-    thr_h = [atom for atom in st[0][0][1] if atom.element.name.upper() == "H"]
+def test_dictionary_hydrogen_matching_normalizes_neutron_d_names(monkeypatch):
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ser = gemmi.Residue()
+    ser.name = "SER"
+    ser.seqid = _seqid(2)
+    ser.add_atom(_atom("OG", "O", (0.0, 0.0, 3.0)))
+    ser.add_atom(_atom("DG", "D", (0.0, 0.0, 2.0)))
+    chain.add_residue(ser)
+    monkeypatch.setattr(
+        monomer_bonds, "get_bonded_hydrogen_names",
+        lambda residue, atom: {"HG"} if (residue, atom) == ("SER", "OG") else set(),
+    )
 
-    assert len(ser_h) == 1
-    assert ser_h[0].name == "HG"
-    assert ser_h[0].pos.x == 9.0
-    assert len(thr_h) == 1
-    assert thr_h[0].name == "HX"
+    hits = core.detect_interactions_in_structure(
+        st, "test", cone_mode="none", annotate_cooperativity=False)
+
+    assert len(hits) == 1
+    assert hits[0]["H_atom"] == "DG"
+
+
+def test_unknown_ligand_requires_unambiguous_covalent_hydrogen(monkeypatch):
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ligand = gemmi.Residue()
+    ligand.name = "ZZZ"
+    ligand.seqid = _seqid(2)
+    ligand.add_atom(_atom("O1", "O", (0.0, 0.0, 3.0)))
+    ligand.add_atom(_atom("N1", "N", (0.2, 0.0, 3.0)))
+    ligand.add_atom(_atom("H1", "H", (0.1, 0.0, 2.0)))
+    chain.add_residue(ligand)
+    monkeypatch.setattr(
+        monomer_bonds, "get_bonded_hydrogen_names",
+        lambda residue, atom: None)
+
+    assert core.detect_interactions_in_structure(
+        st, "test", cone_mode="none") == []
+
+
+def test_unknown_ligand_accepts_unique_element_appropriate_xh_bond(monkeypatch):
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    ligand = gemmi.Residue()
+    ligand.name = "ZZZ"
+    ligand.seqid = _seqid(2)
+    ligand.add_atom(_atom("O1", "O", (0.0, 0.0, 3.0)))
+    ligand.add_atom(_atom("C1", "C", (2.0, 0.0, 3.0)))
+    ligand.add_atom(_atom("H1", "H", (0.0, 0.0, 2.0)))
+    chain.add_residue(ligand)
+    monkeypatch.setattr(
+        monomer_bonds, "get_bonded_hydrogen_names",
+        lambda residue, atom: None)
+
+    hits = core.detect_interactions_in_structure(
+        st, "test", cone_mode="none", annotate_cooperativity=False)
+
+    assert len(hits) == 1
+    assert hits[0]["X_atom"] == "O1"
 
 
 def test_max_b_filters_pi_ring_atoms():

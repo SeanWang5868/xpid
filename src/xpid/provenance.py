@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 import platform
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,7 +46,8 @@ def build_metadata(
             "verbose": getattr(args, "verbose", False),
             "include_coordinates": getattr(args, "include_coordinates", False),
             "sasa": getattr(args, "sasa", False),
-            "cone": getattr(args, "use_cone", False),
+            "cone_mode": (
+                "none" if getattr(args, "no_cone", False) else "auto"),
             "include_p_slab": getattr(args, "include_p_slab", False),
             "xh_candidates": getattr(args, "report_xh_candidates", False),
             "include_water": getattr(args, "include_water", False),
