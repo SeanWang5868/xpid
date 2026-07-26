@@ -93,4 +93,3 @@ def parent_atom(residue: gemmi.Residue,
         (atom for atom in residue if atom.name == definition.parent_atom_name),
         None,
     )
-
