@@ -105,8 +105,8 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                      external_ss_index: Optional[Dict] = None,
                                      sym_contacts: bool = False,
                                      include_water: bool = False,
-                                     max_b: float = 0.0, compute_sasa: bool = False, annotate_cooperativity: bool = True,
-                                     no_hbond_gate: bool = False) -> List[Dict[str, Any]]:
+                                     max_b: float = 0.0, compute_sasa: bool = False,
+                                     annotate_cooperativity: bool = True) -> List[Dict[str, Any]]:
     results = []
     if not structure or len(structure) == 0: return []
 
@@ -168,7 +168,6 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                         results.extend(_detect_residue(
                             pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
                             pi_atoms, pi_alt, mode, filter_donor, filter_donor_atom, cone_mode,
-                            no_hbond_gate,
                             include_p_slab, report_xh_candidates, include_coordinates,
                             pair_keys, ring_size, sasa_map, min_occ,
                             sym_contacts=sym_contacts, max_b=max_b
@@ -220,7 +219,6 @@ def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.Neighbor
 def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
                     pi_atoms: List[gemmi.Atom], pi_alt: str, mode: str, filter_donor: Optional[List[str]],
                     filter_donor_atom: Optional[List[str]], cone_mode: str,
-                    no_hbond_gate: bool,
                     include_p_slab: bool, report_xh_candidates: bool,
                     include_coordinates: bool, pair_keys: ResiduePairKeys,
                     ring_size: int, sasa_map: Dict,
@@ -353,7 +351,7 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
                 rctx, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
                 x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
                 combined_occ, sym_op, include_p_slab, include_coordinates,
-                sasa_map, hits, report_xh_candidates, no_hbond_gate,
+                sasa_map, hits, report_xh_candidates,
                 donor_definition
             )
         else:
@@ -444,7 +442,6 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
                     combined_occ, sym_op, include_p_slab: bool,
                     include_coordinates: bool, sasa_map: Dict, hits,
                     report_xh_candidates: bool = False,
-                    no_hbond_gate: bool = False,
                     donor_definition: Optional[donors.DonorDefinition] = None):
     """Evaluate a chemically complete binary cone for a rotatable donor."""
     if donor_definition is None:
@@ -504,11 +501,6 @@ def _run_cone_track(rctx: "rings._RingContext", x_cra, x_atom, x_mark, x_res, x_
         rctx, donor_definition, parent_pos_arr, x_pos_arr, x_elem,
         environment, dist_x_pi, dist_x_centroid, proj_dist,
         include_p_slab=include_p_slab,
-        hbond_policy=(
-            cone.HBOND_POLICY_LEGACY
-            if report_xh_candidates and not no_hbond_gate
-            else cone.HBOND_POLICY_NONE
-        ),
     )
     if evidence is not None:
         # Candidate/background mode must not export a direction selected merely

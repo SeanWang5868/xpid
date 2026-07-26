@@ -129,7 +129,6 @@ a zero-thickness disk.
 | `--h-mode N` | Gemmi hydrogen mode: 0=NoChange, 1=Shift, 2=Remove, 3=ReAdd, 4=ReAddButWater, 5=ReAddKnown. |
 | `--model ID` | Model index to analyze, or `all`. |
 | `--no-cone` | Disable binary cone detection and use explicit hydrogen positions only. Rotatable donors (Ser, Thr, Tyr, Cys, Lys, methyl groups) use cone detection by default. |
-| `--no-hbond-gate` | Deprecated compatibility option. Standard Cone detection already evaluates all sterically valid conformers; this only affects `--xh-candidates`. |
 | `--include-p-slab`, `--p-slab` | Include the optional P-slab system, P-slab output columns, and P-slab summary counts. |
 | `--xh-candidates` | Export all explicit X-H bonds passing Hudson/Plevin X-position filters, including direction-failed candidates. Cone virtual H is ignored in this mode. |
 | `--sym-contacts` | Detect contacts across crystallographic symmetry mates. |
@@ -203,7 +202,8 @@ directional filters.
   Plevin. OH/SH groups are sampled as one hydrogen through 360 degrees. CH3
   and Lys NH3+ are sampled as complete three-hydrogen conformers through their
   120-degree rotational period. Group-specific CCP4 bond lengths and angles
-  are used, including the non-tetrahedral Cys S-H angle.
+  are used. Cys uses the neutron-validated S-H geometry of 1.212 Angstrom and
+  108.4 degrees.
 - Cone conformers are rejected for severe non-bonded clashes. A chemically
   valid H-bond contact is not treated as a clash. Potential conventional
   H-bonds are descriptive context and do not remove other sterically valid

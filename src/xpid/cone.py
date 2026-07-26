@@ -12,18 +12,6 @@ from . import donors
 from . import systems
 
 
-HBOND_POLICY_NONE = "none"
-HBOND_POLICY_LEGACY = "legacy"
-HBOND_POLICY_CANDIDATE_VETO = "candidate_veto"
-HBOND_POLICY_COMPETING_VETO = "competing_veto"
-HBOND_POLICIES = {
-    HBOND_POLICY_NONE,
-    HBOND_POLICY_LEGACY,
-    HBOND_POLICY_CANDIDATE_VETO,
-    HBOND_POLICY_COMPETING_VETO,
-}
-COMPETING_HBOND_MIN_SEPARATION = 60.0
-
 VDW_RADII = {
     "H": 1.20, "D": 1.20, "C": 1.70, "N": 1.55, "O": 1.52,
     "S": 1.80, "P": 1.80, "SE": 1.90,
@@ -254,33 +242,18 @@ def evaluate_binary(
     dist_x_centroid: float,
     proj_dist: Optional[float],
     include_p_slab: bool = False,
-    disable_hbond_constraint: Optional[bool] = None,
-    hbond_policy: str = HBOND_POLICY_NONE,
 ) -> Optional[PositiveEvidence]:
     """Return one self-consistent positive H conformer, or ``None``.
 
     The production default is a steric-only allowed set.  H-bond geometry is
-    retained as descriptive context.  ``legacy`` reproduces the former global
-    rule; the two veto policies are experimental validation arms.
+    retained as descriptive context and never changes the binary result.
     """
-    if disable_hbond_constraint is not None:
-        hbond_policy = (
-            HBOND_POLICY_NONE if disable_hbond_constraint
-            else HBOND_POLICY_LEGACY
-        )
-    if hbond_policy not in HBOND_POLICIES:
-        raise ValueError(f"Unknown H-bond policy: {hbond_policy}")
     conformers = generate_conformers(parent_pos, x_pos, definition)
     valid, constrained = filter_conformers(conformers, x_pos, environment)
     if not valid:
         return None
 
-    use_constraint = (
-        hbond_policy == HBOND_POLICY_LEGACY and
-        definition.allow_hbond_constraint and
-        bool(constrained)
-    )
-    allowed = constrained if use_constraint else valid
+    allowed = valid
     alternative_hbond_exists = bool(constrained)
 
     positive: List[PositiveEvidence] = []
@@ -292,26 +265,10 @@ def evaluate_binary(
             )
             if metrics["is_hudson"] or metrics["is_plevin"] or (
                     include_p_slab and metrics["is_p_slab"]):
-                strong_directions = _strong_hbond_directions(
-                    x_pos, h_pos, environment)
-                if (hbond_policy == HBOND_POLICY_CANDIDATE_VETO and
-                        strong_directions):
-                    continue
-                if (hbond_policy == HBOND_POLICY_COMPETING_VETO and
-                        strong_directions):
-                    h_to_pi = rctx.pi_center_arr - h_pos
-                    norm = np.linalg.norm(h_to_pi)
-                    if norm and any(
-                        float(np.degrees(np.arccos(np.clip(
-                            np.dot(direction, h_to_pi / norm), -1.0, 1.0))))
-                        >= COMPETING_HBOND_MIN_SEPARATION
-                        for direction in strong_directions
-                    ):
-                        continue
                 relation = _candidate_hbond_relation(
                     conformer, h_index, x_pos, environment,
                     alternative_hbond_exists)
                 positive.append(PositiveEvidence(
-                    conformer, h_index, metrics, use_constraint, relation))
+                    conformer, h_index, metrics, False, relation))
 
     return max(positive, key=_evidence_rank) if positive else None

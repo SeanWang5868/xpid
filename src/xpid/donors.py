@@ -52,7 +52,7 @@ ROTATABLE_DONORS: Dict[Tuple[str, str], DonorDefinition] = {
     ("SER", "OG"): _single("CB", "O", 0.972, 108.539),
     ("THR", "OG1"): _single("CB", "O", 0.972, 109.544),
     ("TYR", "OH"): _single("CZ", "O", 0.966, 109.970),
-    ("CYS", "SG"): _single("CB", "S", 1.338, 97.543),
+    ("CYS", "SG"): _single("CB", "S", 1.212, 108.4),
     ("LYS", "NZ"): _three(
         "CE", DonorKind.ROTATABLE_NH3, "N", 1.018, 109.659, True),
 

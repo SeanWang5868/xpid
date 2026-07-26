@@ -49,7 +49,7 @@ def test_ser_conformer_uses_group_specific_geometry():
     assert _angle(parent, x_pos, h_pos) == pytest.approx(108.539, abs=1e-8)
 
 
-def test_cys_cone_uses_non_tetrahedral_sulfur_angle():
+def test_cys_cone_uses_neutron_validated_geometry():
     definition = donors.get_definition("CYS", "SG")
     parent = np.array([0.0, 0.0, 0.0])
     x_pos = np.array([1.812, 0.0, 0.0])
@@ -57,8 +57,8 @@ def test_cys_cone_uses_non_tetrahedral_sulfur_angle():
     h_pos = cone.generate_conformers(
         parent, x_pos, definition)[0].hydrogen_positions[0]
 
-    assert np.linalg.norm(h_pos - x_pos) == pytest.approx(1.338, abs=1e-8)
-    assert _angle(parent, x_pos, h_pos) == pytest.approx(97.543, abs=1e-8)
+    assert np.linalg.norm(h_pos - x_pos) == pytest.approx(1.212, abs=1e-8)
+    assert _angle(parent, x_pos, h_pos) == pytest.approx(108.4, abs=1e-8)
 
 
 def test_methyl_conformer_contains_three_coupled_hydrogens():
@@ -151,7 +151,7 @@ def test_nonlocking_hbond_contact_is_not_a_steric_clash():
     assert constrained == []
 
 
-def test_default_steric_only_policy_does_not_lock_to_hbond_direction():
+def test_steric_only_detector_does_not_lock_to_hbond_direction():
     definition = donors.get_definition("SER", "OG")
     parent = np.array([1.42, 0.0, 3.0])
     x_pos = np.array([0.0, 0.0, 3.0])
@@ -180,56 +180,8 @@ def test_default_steric_only_policy_does_not_lock_to_hbond_direction():
         ring_context, definition, parent, x_pos, "O", environment,
         dist_x_plane=3.0, dist_x_centroid=3.0, proj_dist=0.0,
     )
-    legacy = cone.evaluate_binary(
-        ring_context, definition, parent, x_pos, "O", environment,
-        dist_x_plane=3.0, dist_x_centroid=3.0, proj_dist=0.0,
-        hbond_policy=cone.HBOND_POLICY_LEGACY,
-    )
-
     assert default is not None
     assert default.hbond_relation == "alternative_conformer"
-    assert legacy is None
-
-
-def test_candidate_veto_skips_same_hydrogen_but_can_find_another_xhpi_conformer():
-    definition = donors.get_definition("SER", "OG")
-    parent = np.array([1.42, 0.0, 3.0])
-    x_pos = np.array([0.0, 0.0, 3.0])
-    ring_context = SimpleNamespace(
-        pi_center_arr=np.array([0.0, 0.0, 0.0]),
-        pi_normal=np.array([0.0, 0.0, 1.0]),
-        p_radius=2.0,
-        p_slab_half_thickness=0.5,
-    )
-    conformers = cone.generate_conformers(parent, x_pos, definition)
-    toward_ring = min(
-        conformers, key=lambda item: item.hydrogen_positions[0][2])
-    h_pos = toward_ring.hydrogen_positions[0]
-    h_to_ring = (
-        ring_context.pi_center_arr - h_pos
-    ) / np.linalg.norm(ring_context.pi_center_arr - h_pos)
-    acceptor_pos = h_pos + 1.8 * h_to_ring
-    oxygen = _atom("OD1", "O", tuple(acceptor_pos))
-    asp = _residue("ASP", [oxygen])
-    environment = [
-        cone.EnvironmentAtom(acceptor_pos, oxygen, asp, "B", 0)
-    ]
-
-    annotated = cone.evaluate_binary(
-        ring_context, definition, parent, x_pos, "O", environment,
-        dist_x_plane=3.0, dist_x_centroid=3.0, proj_dist=0.0,
-    )
-    vetoed = cone.evaluate_binary(
-        ring_context, definition, parent, x_pos, "O", environment,
-        dist_x_plane=3.0, dist_x_centroid=3.0, proj_dist=0.0,
-        hbond_policy=cone.HBOND_POLICY_CANDIDATE_VETO,
-    )
-
-    assert annotated is not None
-    assert annotated.hbond_relation == "same_hydrogen"
-    assert vetoed is not None
-    assert vetoed.hbond_relation == "alternative_conformer"
-    assert vetoed.conformer.phi != annotated.conformer.phi
 
 
 def test_lys_nitrogen_cannot_lock_a_cone_as_acceptor():
