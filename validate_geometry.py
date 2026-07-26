@@ -178,16 +178,18 @@ def validate_hit(
     H_atom = hit.get("H_atom", "")
     H_source = hit.get("H_source", "")
 
-    # Skip cone_virtual hits — cannot validate without the actual H position
-    if H_source == "cone_virtual":
-        return issues
-
     try:
         centroid, normal, radius = compute_ring_geometry(
             structure, pi_chain, pi_id, pi_res,
             str(hit.get("pi_ring_id", "ring1")))
         x_pos, h_pos = compute_donor_coords(
             structure, X_chain, X_id, X_atom, H_atom if H_atom != "virt" else None)
+        if H_source == "cone_virtual":
+            h_coords = (
+                hit.get("H_xyz_x"), hit.get("H_xyz_y"), hit.get("H_xyz_z"))
+            if any(value is None for value in h_coords):
+                raise ValueError("Cone hit does not contain virtual H coordinates")
+            h_pos = np.array(h_coords, dtype=float)
     except ValueError as e:
         return [f"  Cannot compute geometry: {e}"]
 
