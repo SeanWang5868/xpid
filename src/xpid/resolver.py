@@ -5,10 +5,31 @@ Input file resolution: PDB list parsing, local mirror lookup, directory scanning
 import logging
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set
 
 logger = logging.getLogger("xpid.resolver")
+
+
+@dataclass(frozen=True)
+class InputResolution:
+    """Resolved structure files and auditable PDB-list source counts."""
+
+    files: List[Path]
+    pdb_list_entries: int = 0
+    pdb_redo: int = 0
+    standard_pdb: int = 0
+    missing: int = 0
+    missing_codes: tuple[str, ...] = ()
+
+    def provenance_counts(self) -> Dict[str, int]:
+        return {
+            "pdb_list_entries": self.pdb_list_entries,
+            "pdb_redo_mirror": self.pdb_redo,
+            "standard_pdb_mirror": self.standard_pdb,
+            "missing": self.missing,
+        }
 
 
 def parse_pdb_list_file(list_path: Path) -> Set[str]:
@@ -69,9 +90,9 @@ def resolve_redo_path(mirror_root: Path, pdb_code: str) -> Optional[Path]:
     return None
 
 
-def gather_inputs(inputs: List[str], pdb_list: str,
-                  pdb_mirror: str, redo_mirror: str) -> List[Path]:
-    """Combine direct file/directory inputs with PDB-list + mirror lookups.
+def resolve_inputs(inputs: List[str], pdb_list: str,
+                   pdb_mirror: str, redo_mirror: str) -> InputResolution:
+    """Resolve inputs and retain source counts for logging and provenance.
 
     PDB-REDO mirror is prioritized over the standard PDB mirror when both
     are provided.
@@ -110,8 +131,6 @@ def gather_inputs(inputs: List[str], pdb_list: str,
             sys.exit(1)
 
         codes = parse_pdb_list_file(Path(pdb_list))
-        logger.info(f"Parsed {len(codes)} PDB codes from list.")
-
         found_redo = 0
         found_pdb = 0
         missing: List[str] = []
@@ -136,11 +155,19 @@ def gather_inputs(inputs: List[str], pdb_list: str,
             else:
                 missing.append(code)
 
-        logger.info(f"Found {found_redo} in PDB-REDO, {found_pdb} in standard PDB.")
-        if missing:
-            logger.warning(
-                f"Could not find {len(missing)} PDBs in any mirror "
-                f"(e.g., {', '.join(missing[:5])}...)"
-            )
+        return InputResolution(
+            files=sorted(final_files),
+            pdb_list_entries=len(codes),
+            pdb_redo=found_redo,
+            standard_pdb=found_pdb,
+            missing=len(missing),
+            missing_codes=tuple(sorted(missing)),
+        )
 
-    return sorted(final_files)
+    return InputResolution(files=sorted(final_files))
+
+
+def gather_inputs(inputs: List[str], pdb_list: str,
+                  pdb_mirror: str, redo_mirror: str) -> List[Path]:
+    """Backward-compatible file-list-only input resolver."""
+    return resolve_inputs(inputs, pdb_list, pdb_mirror, redo_mirror).files

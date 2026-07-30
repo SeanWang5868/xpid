@@ -10,7 +10,7 @@ import sys
 import platform
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Mapping, Optional
 
 import gemmi
 
@@ -28,9 +28,10 @@ def build_metadata(
     output_path: Path,
     monomer_lib_path: str,
     file_count: int,
+    input_resolution: Optional[Mapping[str, int]] = None,
 ) -> Dict[str, Any]:
     """Build a dictionary of provenance information from the argparse namespace."""
-    return {
+    metadata = {
         "tool": "xpid",
         "version": _try_import_xpid_version(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -58,6 +59,9 @@ def build_metadata(
             "jobs": getattr(args, "jobs", 1),
         },
     }
+    if input_resolution is not None:
+        metadata["input_resolution"] = dict(input_resolution)
+    return metadata
 
 
 def write_metadata(metadata: Dict[str, Any], output_dir: Path, stem: str) -> Optional[Path]:

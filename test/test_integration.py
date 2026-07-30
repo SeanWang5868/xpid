@@ -145,6 +145,22 @@ def test_provenance_records_real_cone_mode_and_paths(tmp_path):
     assert metadata["parameters"]["cone_mode"] == "none"
 
 
+def test_provenance_records_input_resolution_counts(tmp_path):
+    args = cli._build_parser().parse_args(["dummy.cif"])
+    counts = {
+        "pdb_list_entries": 12,
+        "pdb_redo_mirror": 5,
+        "standard_pdb_mirror": 6,
+        "missing": 1,
+    }
+
+    metadata = provenance.build_metadata(
+        args, tmp_path / "results.csv", "/monomers", file_count=11,
+        input_resolution=counts)
+
+    assert metadata["input_resolution"] == counts
+
+
 def test_cli_parser_default_cone_auto_and_p_slab_off():
     parser = cli._build_parser()
     args = parser.parse_args(["dummy.cif"])
@@ -288,6 +304,33 @@ def test_directory_input_collects_structure_extensions_recursively(tmp_path):
     found = resolver.gather_inputs([str(root)], None, None, None)
 
     assert found == sorted(candidate.resolve() for candidate in expected)
+
+
+def test_pdb_list_resolution_reports_sources_and_prioritizes_redo(tmp_path):
+    pdb_root = tmp_path / "pdb"
+    redo_root = tmp_path / "redo"
+    pdb_list = tmp_path / "ids.txt"
+    pdb_list.write_text("1abc\n2def\n3ghi\n", encoding="utf-8")
+
+    redo_1abc = redo_root / "ab" / "1abc" / "1abc_final.cif"
+    pdb_1abc = pdb_root / "ab" / "1abc.cif.gz"
+    pdb_2def = pdb_root / "de" / "2def.cif.gz"
+    for path in (redo_1abc, pdb_1abc, pdb_2def):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
+
+    resolved = resolver.resolve_inputs(
+        [], str(pdb_list), str(pdb_root), str(redo_root))
+
+    assert resolved.files == sorted(
+        [redo_1abc.resolve(), pdb_2def.resolve()])
+    assert resolved.provenance_counts() == {
+        "pdb_list_entries": 3,
+        "pdb_redo_mirror": 1,
+        "standard_pdb_mirror": 1,
+        "missing": 1,
+    }
+    assert resolved.missing_codes == ("3ghi",)
 
 
 def test_cation_pi_donors_are_excluded_from_core_detection():
@@ -891,6 +934,41 @@ def test_csv_output_can_include_coordinate_columns(tmp_path):
         "X_side_of_pi",
     ):
         assert col in header
+
+
+def test_parquet_streaming_uses_declared_types_across_chunks(tmp_path):
+    pyarrow = pytest.importorskip("pyarrow")
+    pyarrow_parquet = pytest.importorskip("pyarrow.parquet")
+    base = {
+        "pdb": "first",
+        "model": "1",
+        "resolution": 1.5,
+        "hbond_acceptor_atom": None,
+        "hbond_acceptor_res": None,
+        "hbond_acceptor_chain": None,
+        "hbond_HA_dist": None,
+        "hbond_DHA_angle": None,
+        "hbond_vs_xhpi_score": None,
+    }
+    out_path = tmp_path / "streamed.parquet"
+
+    with output.ResultStreamer(
+            out_path, "parquet", verbose=True) as streamer:
+        streamer.write_chunk([base])
+        streamer.write_chunk([{
+            **base,
+            "pdb": "second",
+            "hbond_acceptor_atom": "O",
+            "hbond_acceptor_res": "ASP",
+            "hbond_acceptor_chain": "A",
+            "hbond_HA_dist": 1.9,
+        }])
+
+    table = pyarrow_parquet.read_table(out_path)
+    assert table.column("hbond_acceptor_atom").to_pylist() == [None, "O"]
+    assert table.column("hbond_acceptor_res").to_pylist() == [None, "ASP"]
+    assert table.schema.field(
+        "hbond_acceptor_atom").type == pyarrow.large_string()
 
 
 def test_csv_output_can_include_p_slab_columns(tmp_path):

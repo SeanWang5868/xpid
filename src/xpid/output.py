@@ -83,6 +83,8 @@ class ResultStreamer:
         self.file_handle = None
         self.csv_writer = None
         self.parquet_writer = None
+        self.parquet_schema = None
+        self.parquet_columns = None
         self.is_first_chunk = True
 
         # Validate parquet dependencies early
@@ -145,7 +147,19 @@ class ResultStreamer:
         elif self.file_type == 'parquet':
 
             df = self._dataframe_for_parquet(results)
-            table = self.pa.Table.from_pandas(df, preserve_index=False)
+            if self.is_first_chunk:
+                self.parquet_columns = list(df.columns)
+                self.parquet_schema = self._arrow_schema(
+                    self.parquet_columns)
+            else:
+                unexpected = set(df.columns) - set(self.parquet_columns)
+                if unexpected:
+                    raise ValueError(
+                        "Parquet output columns changed between chunks: "
+                        + ", ".join(sorted(unexpected)))
+                df = df.reindex(columns=self.parquet_columns)
+            table = self.pa.Table.from_pandas(
+                df, schema=self.parquet_schema, preserve_index=False)
             if self.is_first_chunk:
                 self.parquet_writer = self.pq.ParquetWriter(self.output_path, table.schema)
                 self.is_first_chunk = False
@@ -160,6 +174,23 @@ class ResultStreamer:
             df[col] = self.pd.to_numeric(df[col], errors='coerce').astype('Int64')
 
         return df
+
+    def _arrow_schema(self, columns: List[str]):
+        """Build a stable Arrow schema from the central output registry."""
+        arrow_fields = []
+        arrow_types = {
+            "str": self.pa.large_string(),
+            "float": self.pa.float64(),
+            "int": self.pa.int64(),
+        }
+        for column in columns:
+            descriptor = schema.field(column)
+            if descriptor is None:
+                raise ValueError(
+                    f"No declared output type for Parquet column {column!r}")
+            arrow_fields.append(
+                self.pa.field(column, arrow_types[descriptor.dtype]))
+        return self.pa.schema(arrow_fields)
 
     def _simple_cols(self) -> List[str]:
         def with_coordinates(cols: List[str]) -> List[str]:

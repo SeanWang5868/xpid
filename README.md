@@ -205,8 +205,8 @@ directional filters.
   Plevin. OH/SH groups are sampled as one hydrogen through 360 degrees. CH3
   and Lys NH3+ are sampled as complete three-hydrogen conformers through their
   120-degree rotational period. Group-specific CCP4 bond lengths and angles
-  are used. Cys uses the neutron-validated S-H geometry of 1.212 Angstrom and
-  108.4 degrees.
+  are used. Cys uses the CCP4 monomer-library nuclear S-H distance of
+  1.338 Angstrom and the restrained C-S-H angle of 97.543 degrees.
 - Cone conformers are rejected for severe non-bonded clashes. A chemically
   valid H-bond contact is not treated as a clash. Potential conventional
   H-bonds are descriptive context and do not remove other sterically valid

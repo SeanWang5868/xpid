@@ -13,12 +13,12 @@ from typing import List, Dict, Any, NamedTuple, Optional
 try:
     from xpid import hydrogen_prep, detector, config, structure_io
     from xpid.output import ResultStreamer
-    from xpid.resolver import gather_inputs
+    from xpid.resolver import resolve_inputs
 except ImportError:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     from xpid import hydrogen_prep, detector, config, structure_io
     from xpid.output import ResultStreamer
-    from xpid.resolver import gather_inputs
+    from xpid.resolver import resolve_inputs
 from xpid import provenance
 from xpid import monlib
 
@@ -305,7 +305,9 @@ def main():
     args = parser.parse_args()
 
     # Step 1: Gather input files
-    files = gather_inputs(args.inputs, args.pdb_list, args.pdb_mirror, args.redo_mirror)
+    input_resolution = resolve_inputs(
+        args.inputs, args.pdb_list, args.pdb_mirror, args.redo_mirror)
+    files = input_resolution.files
 
     if not files:
         print("No valid input files found. Please check inputs or list/mirror paths.")
@@ -325,6 +327,20 @@ def main():
             handlers=[logging.StreamHandler(sys.stdout)])
 
     logger.info("--- Xpid Initialization ---")
+    if args.pdb_list:
+        logger.info(
+            f"PDB-list entries : {input_resolution.pdb_list_entries}")
+        logger.info(
+            f"PDB-REDO mirror  : {input_resolution.pdb_redo}")
+        logger.info(
+            f"Standard PDB     : {input_resolution.standard_pdb}")
+        logger.info(
+            f"Missing          : {input_resolution.missing}")
+        if input_resolution.missing_codes:
+            logger.warning(
+                f"Could not find {input_resolution.missing} PDBs in any "
+                f"mirror (e.g., "
+                f"{', '.join(input_resolution.missing_codes[:5])}...)")
 
     # Step 2: Build configuration
     filters = {
@@ -368,7 +384,8 @@ def main():
             output_dir if args.separate else
             output_dir / f"{args.output_name}.{args.file_type.lower()}")
         meta = provenance.build_metadata(
-            args, provenance_output, monomer_library_path, len(files))
+            args, provenance_output, monomer_library_path, len(files),
+            input_resolution=input_resolution.provenance_counts())
         provenance.write_metadata(meta, output_dir, args.output_name)
         _meta_path = output_dir / f"{args.output_name}_metadata.json"
         logger.info(f"[PROVENANCE] Written to {_meta_path}")
