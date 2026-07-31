@@ -179,6 +179,38 @@ def test_cli_parser_accepts_residue_pair_selectors():
     assert args.residue_pair == ["//A/12", "//A/18"]
 
 
+def test_cli_sections_use_consistent_plain_text_formatting():
+    rendered = cli._format_sections("Xpid initialization", [
+        ("Input", [
+            ("Unique targets", 3),
+            ("Missing", 0),
+        ]),
+        ("Detection", [
+            ("Cone", "auto (rotatable groups)"),
+            ("P-slab", cli._on_off(False)),
+        ]),
+    ])
+
+    assert rendered == (
+        "Xpid initialization\n"
+        "\n"
+        "Input\n"
+        "  Unique targets : 3\n"
+        "  Missing        : 0\n"
+        "\n"
+        "Detection\n"
+        "  Cone           : auto (rotatable groups)\n"
+        "  P-slab         : off"
+    )
+    assert "[INFO]" not in rendered
+    assert "[SUMMARY]" not in rendered
+
+
+def test_cli_boolean_status_has_only_on_and_off():
+    assert cli._on_off(True) == "on"
+    assert cli._on_off(False) == "off"
+
+
 def test_jobs_one_uses_direct_worker_without_pool(monkeypatch):
     tasks = [object(), object()]
     monkeypatch.setattr(

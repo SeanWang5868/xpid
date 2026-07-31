@@ -8,7 +8,7 @@ import multiprocessing
 import os
 import sys
 from pathlib import Path
-from typing import List, Dict, Any, NamedTuple, Optional
+from typing import List, Dict, Any, NamedTuple, Optional, Sequence, Tuple
 
 try:
     from xpid import hydrogen_prep, detector, config, structure_io
@@ -91,6 +91,29 @@ def setup_logging(log_file: Path):
         handlers=handlers,
         force=True,
     )
+
+
+def _on_off(enabled: bool) -> str:
+    """Return one consistent spelling for boolean CLI status values."""
+    return "on" if enabled else "off"
+
+
+def _format_sections(
+        heading: str,
+        sections: Sequence[Tuple[str, Sequence[Tuple[str, Any]]]]) -> str:
+    """Render aligned, plain-text CLI sections without terminal styling."""
+    rows = [row for _, section_rows in sections for row in section_rows]
+    label_width = max((len(label) for label, _ in rows), default=0)
+    lines = [heading]
+
+    for section_name, section_rows in sections:
+        lines.extend(("", section_name))
+        lines.extend(
+            f"  {label:<{label_width}} : {value}"
+            for label, value in section_rows
+        )
+
+    return "\n".join(lines)
 
 
 def empty_system_summary(include_p_slab: bool = False) -> Dict[str, int]:
@@ -326,22 +349,6 @@ def main():
             level=logging.INFO, format='%(message)s',
             handlers=[logging.StreamHandler(sys.stdout)])
 
-    logger.info("--- Xpid Initialization ---")
-    if args.pdb_list:
-        logger.info(
-            f"PDB-list entries : {input_resolution.pdb_list_entries}")
-        logger.info(
-            f"PDB-REDO mirror  : {input_resolution.pdb_redo}")
-        logger.info(
-            f"Standard PDB     : {input_resolution.standard_pdb}")
-        logger.info(
-            f"Missing          : {input_resolution.missing}")
-        if input_resolution.missing_codes:
-            logger.warning(
-                f"Could not find {input_resolution.missing} PDBs in any "
-                f"mirror (e.g., "
-                f"{', '.join(input_resolution.missing_codes[:5])}...)")
-
     # Step 2: Build configuration
     filters = {
         'pi': [x.strip().upper() for x in args.pi_res.split(',')] if args.pi_res else None,
@@ -351,34 +358,21 @@ def main():
 
     h_mode_desc = H_MODE_MAP.get(args.h_mode, "Unknown")
     cone_mode = "none" if args.no_cone else "auto"
-    cone_status = "Auto (cone for rotatable)" if cone_mode == "auto" else "Disabled (explicit H only)"
-    p_slab_status = "Included" if args.include_p_slab else "Excluded (default)"
-    candidate_status = "Enabled" if args.report_xh_candidates else "Disabled (default)"
-    coordinate_status = "Included" if args.include_coordinates else "Excluded (default)"
-    sym_status = "Enabled" if args.sym_contacts else "Disabled"
-    water_status = "Included" if args.include_water else "Excluded (default)"
-    max_b_status = f"{args.max_b:.1f} \u00c5\u00b2" if args.max_b > 0 else "No filter"
+    cone_status = (
+        "auto (rotatable groups)" if cone_mode == "auto"
+        else "off (explicit H only)"
+    )
+    max_b_status = f"{args.max_b:.1f} \u00c5\u00b2" if args.max_b > 0 else "none"
 
-    logger.info(f"Targets     : {len(files)} unique structures")
-    logger.info(f"Output Dir  : {output_dir.resolve()}")
-    logger.info(f"Format      : {args.file_type.upper()} "
-                f"({'Separate Files' if args.separate else 'Merged File'})")
-    logger.info(f"H-Mode      : {args.h_mode} ({h_mode_desc})")
     monomer_library_path = (
         monlib.find_installed_monomer_library() or "not installed")
-    logger.info("Monomer Lib : %s", monomer_library_path)
-    logger.info(f"Cone Mode   : {cone_mode} ({cone_status})")
-    logger.info(f"P-slab      : {p_slab_status}")
-    logger.info(f"X-H Export  : {candidate_status}")
-    logger.info(f"Coordinates : {coordinate_status}")
-    logger.info(f"Sym Contacts: {sym_status}")
-    logger.info(f"Water       : {water_status}")
-    logger.info(f"Max B-factor: {max_b_status}")
-    if args.residue_pair:
-        logger.info(f"Residue Pair: {args.residue_pair[0]} <-> {args.residue_pair[1]}")
     allow_remote_recovery = _allow_remote_recovery(args, files)
-    recovery_status = "Enabled for single direct file" if allow_remote_recovery else "Disabled for batch input"
-    logger.info(f"RCSB Rescue : {recovery_status}")
+    recovery_status = (
+        "on (single direct file)" if allow_remote_recovery
+        else "off (batch input)"
+    )
+
+    provenance_path = None
     if args.provenance:
         provenance_output = (
             output_dir if args.separate else
@@ -387,9 +381,61 @@ def main():
             args, provenance_output, monomer_library_path, len(files),
             input_resolution=input_resolution.provenance_counts())
         provenance.write_metadata(meta, output_dir, args.output_name)
-        _meta_path = output_dir / f"{args.output_name}_metadata.json"
-        logger.info(f"[PROVENANCE] Written to {_meta_path}")
-    print("")
+        provenance_path = output_dir / f"{args.output_name}_metadata.json"
+
+    input_rows: List[Tuple[str, Any]] = []
+    if args.pdb_list:
+        input_rows.extend((
+            ("PDB list entries", input_resolution.pdb_list_entries),
+            ("Unique targets", len(files)),
+            ("PDB-REDO mirror", input_resolution.pdb_redo),
+            ("PDB mirror", input_resolution.standard_pdb),
+            ("Missing", input_resolution.missing),
+        ))
+    else:
+        input_rows.append(("Unique targets", len(files)))
+
+    detection_rows: List[Tuple[str, Any]] = [
+        ("Hydrogen mode", f"{args.h_mode} ({h_mode_desc})"),
+        ("Cone", cone_status),
+        ("P-slab", _on_off(args.include_p_slab)),
+        ("Candidate export", _on_off(args.report_xh_candidates)),
+        ("Symmetry contacts", _on_off(args.sym_contacts)),
+        ("Water donors", _on_off(args.include_water)),
+        ("B-factor limit", max_b_status),
+    ]
+    if args.residue_pair:
+        detection_rows.append(
+            ("Residue pair", f"{args.residue_pair[0]} <-> {args.residue_pair[1]}"))
+
+    result_layout = (
+        f"separate {args.file_type.upper()} files" if args.separate
+        else f"merged {args.file_type.upper()}"
+    )
+    initialization = _format_sections("Xpid initialization", [
+        ("Input", input_rows),
+        ("Detection", detection_rows),
+        ("Execution", [
+            ("Workers", args.jobs),
+            ("Monomer library", monomer_library_path),
+            ("RCSB fallback", recovery_status),
+        ]),
+        ("Output", [
+            ("Directory", output_dir.resolve()),
+            ("Results", result_layout),
+            ("Coordinate columns", _on_off(args.include_coordinates)),
+            ("Provenance", provenance_path or "off"),
+            ("Run log", log_file if args.log else "off"),
+        ]),
+    ])
+    logger.info("%s", initialization)
+
+    if input_resolution.missing_codes:
+        examples = ", ".join(input_resolution.missing_codes[:5])
+        suffix = ", ..." if len(input_resolution.missing_codes) > 5 else ""
+        logger.warning(
+            "Missing %d PDB entries in both mirrors (examples: %s%s)",
+            input_resolution.missing, examples, suffix)
 
     # Step 3: Execute
     ftype_arg = args.file_type.lower()
@@ -409,6 +455,7 @@ def main():
     error_logs: List[str] = []
     total_found = 0
     system_totals = empty_system_summary(args.include_p_slab)
+    progress_started = False
 
     try:
         merge_file_path = None
@@ -429,7 +476,10 @@ def main():
                 iter_task_results(tasks, args.jobs), 1):
             if err:
                 error_logs.append(err)
-                logging.warning(f"\n[WARN] {err}")
+                if progress_started:
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                logger.warning("Structure processing failed:\n%s", err)
 
             total_found += count
             add_system_summary(system_totals, system_summary)
@@ -439,46 +489,63 @@ def main():
 
             percent = (i / len(files)) * 100
             sys.stdout.write(
-                f"\r[INFO] Progress   : {i}/{len(files)} ({percent:.1f}%)")
+                f"\rProgress  {i}/{len(files)} ({percent:.1f}%)")
             sys.stdout.flush()
+            progress_started = True
 
         if streamer:
             streamer.__exit__(None, None, None)
 
-        print("\n")
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
         # Step 4: Summary
-        print("-" * 60)
+        interaction_rows: List[Tuple[str, Any]] = []
         if args.report_xh_candidates:
-            print(f"[SUMMARY] Total X-H candidates exported       : {total_found}")
-            print(f"[SUMMARY] Hudson-positive among candidates   : {system_totals['hudson']}")
-            print(f"[SUMMARY] Plevin-positive among candidates   : {system_totals['plevin']}")
-            print(f"[SUMMARY] Hudson/Plevin union among candidates: {system_totals['hudson_plevin_union']}")
-            print(f"[SUMMARY] Hudson+Plevin overlap among candidates: {system_totals['hudson_plevin']}")
-            print(f"[SUMMARY] Direction-filter negative candidates: {total_found - system_totals['hudson_plevin_union']}")
+            interaction_rows.extend((
+                ("Total", total_found),
+                ("Hudson positive", system_totals['hudson']),
+                ("Plevin positive", system_totals['plevin']),
+                ("Hudson/Plevin union", system_totals['hudson_plevin_union']),
+                ("Hudson/Plevin overlap", system_totals['hudson_plevin']),
+                ("Direction negative",
+                 total_found - system_totals['hudson_plevin_union']),
+            ))
         else:
-            print(f"[SUMMARY] Total XH-π interactions detected: {total_found}")
-            print(f"[SUMMARY] Hudson-positive       : {system_totals['hudson']}")
-            print(f"[SUMMARY] Plevin-positive       : {system_totals['plevin']}")
-            print(f"[SUMMARY] Hudson/Plevin union   : {system_totals['hudson_plevin_union']}")
-            print(f"[SUMMARY] Hudson+Plevin overlap : {system_totals['hudson_plevin']}")
+            interaction_rows.extend((
+                ("Total", total_found),
+                ("Hudson positive", system_totals['hudson']),
+                ("Plevin positive", system_totals['plevin']),
+                ("Hudson/Plevin union", system_totals['hudson_plevin_union']),
+                ("Hudson/Plevin overlap", system_totals['hudson_plevin']),
+            ))
         if args.include_p_slab:
-            print(f"[SUMMARY] P-slab-positive       : {system_totals['p_slab']}")
-            print(f"[SUMMARY] All-three overlap     : {system_totals['all_three']}")
+            interaction_rows.extend((
+                ("P-slab positive", system_totals['p_slab']),
+                ("All-three overlap", system_totals['all_three']),
+            ))
 
-        if error_logs:
-            print(f"[WARNING] {len(error_logs)} files failed processing. Check log for details.")
-
-        if total_found > 0:
-            if not args.separate:
-                print(f"[OUTPUT] Merged result saved to:\n  -> {merge_file_path.resolve()}")
-            else:
-                print(f"[OUTPUT] Separate result files saved in:\n  -> {output_dir.resolve()}")
-        else:
-            print("[OUTPUT] No interactions found.")
+        result_path = (
+            output_dir.resolve() if args.separate
+            else merge_file_path.resolve()
+        )
+        summary = _format_sections("Run complete", [
+            ("Processing", [
+                ("Structures", len(files)),
+                ("Completed", len(files) - len(error_logs)),
+                ("Failed", len(error_logs)),
+            ]),
+            ("Candidates" if args.report_xh_candidates else "Interactions",
+             interaction_rows),
+            ("Output", [("Results", result_path)]),
+        ])
+        logger.info("%s", summary)
 
     except Exception as e:
-        logger.error(f"\nExecution failed: {e}")
+        if progress_started:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        logger.error("Execution failed: %s", e)
         import traceback
         traceback.print_exc()
 
