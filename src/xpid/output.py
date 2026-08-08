@@ -137,11 +137,14 @@ class ResultStreamer:
             self.csv_writer.writerows(rows)
 
         elif self.file_type == 'json':
-            comma = '' if self.is_first_chunk else ',\n'
-            for r in results:
-                self.file_handle.write(comma + json.dumps(
-                    self._row_for_output(r), indent=2 if self.verbose else None))
-                comma = ',\n'
+            serialized = ",\n".join(
+                json.dumps(self._row_for_output(r),
+                           indent=2 if self.verbose else None)
+                for r in results
+            )
+            if serialized:
+                prefix = "" if self.is_first_chunk else ",\n"
+                self.file_handle.write(prefix + serialized)
             self.is_first_chunk = False
 
         elif self.file_type == 'parquet':
