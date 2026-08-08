@@ -31,3 +31,8 @@ run_dui2_nodes/
 dui_install/
 install_dui2_after_ccp4_w_curl.sh
 .codex_tmp_section02/
+
+# Test artifact directories
+_baseline_tests/
+_test_*/
+_final/
