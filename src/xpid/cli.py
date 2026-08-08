@@ -209,6 +209,24 @@ def process_one_file(task: TaskPacket):
         return f"{task.filepath}: {e}\n{traceback.format_exc()}", 0, [], None, empty_system_summary(task.include_p_slab)
 
 
+_STANDARD_RESIDUES = frozenset({
+    "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS",
+    "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP",
+    "TYR", "VAL", "MSE", "HOH", "DA", "DC", "DG", "DT", "A", "C",
+    "G", "U",
+})
+
+
+def _worker_initializer() -> None:
+    """Pre-warm the shared monomer library in every worker process.
+
+    This avoids a cold-start penalty on the first structure processed by
+    each worker.  The call is a no-op for monomers already loaded.
+    """
+    from xpid import hydrogen_prep
+    hydrogen_prep._get_shared_monlib(_STANDARD_RESIDUES)  # noqa: SLF001
+
+
 def iter_task_results(tasks: List[TaskPacket], jobs: int):
     """Yield worker results without process overhead for ``jobs=1``."""
     if jobs < 1:
@@ -218,7 +236,7 @@ def iter_task_results(tasks: List[TaskPacket], jobs: int):
             yield process_one_file(task)
         return
 
-    with multiprocessing.Pool(jobs) as pool:
+    with multiprocessing.Pool(jobs, initializer=_worker_initializer) as pool:
         yield from pool.imap_unordered(process_one_file, tasks, chunksize=1)
 
 
