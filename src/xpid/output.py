@@ -90,6 +90,7 @@ class ResultStreamer:
         self.is_first_chunk = True
         self._write_queue: "queue.Queue[List[Dict[str, Any]]]" = queue.Queue(maxsize=200)
         self._writer_thread: threading.Thread | None = None
+        self._writer_error: BaseException | None = None
         self._sentinel = object()
 
         # Validate parquet dependencies early
@@ -135,17 +136,58 @@ class ResultStreamer:
             self.parquet_writer.close()
 
     def write_chunk(self, results: List[Dict[str, Any]]):
-        """Enqueue a batch of result dicts for background writing."""
-        if results:
-            self._write_queue.put(results)
+        """Enqueue a batch of result dicts for background writing.
+
+        Raises :exc:`RuntimeError` if the background writer thread has
+        died, turning what would otherwise be a silent deadlock into a
+        visible error.
+        """
+        if not results:
+            return
+        if self._writer_error is not None:
+            raise RuntimeError(
+                "Background writer thread has failed; "
+                "output is incomplete."
+            ) from self._writer_error
+        # Use a timeout so a full queue never blocks the main thread
+        # indefinitely — the writer thread may have died without setting
+        # _writer_error (e.g. the process is being killed).
+        while True:
+            try:
+                self._write_queue.put(results, timeout=5.0)
+                break
+            except queue.Full:
+                if self._writer_error is not None:
+                    raise RuntimeError(
+                        "Background writer thread has failed; "
+                        "output is incomplete."
+                    ) from self._writer_error
+                if (self._writer_thread is not None
+                        and not self._writer_thread.is_alive()):
+                    raise RuntimeError(
+                        "Background writer thread died unexpectedly; "
+                        "output is incomplete."
+                    )
 
     def _run_writer(self) -> None:
         """Background thread: drain the write queue and persist batches."""
-        while True:
-            item = self._write_queue.get()
-            if item is self._sentinel:
-                break
-            self._write_batch(item)
+        try:
+            while True:
+                item = self._write_queue.get()
+                if item is self._sentinel:
+                    break
+                self._write_batch(item)
+        except BaseException as exc:
+            self._writer_error = exc
+            logger.error("Background writer thread failed: %s", exc)
+            # Drain remaining items so the main thread never blocks on put().
+            while True:
+                try:
+                    item = self._write_queue.get(timeout=0.1)
+                except queue.Empty:
+                    break
+                if item is self._sentinel:
+                    break
 
     def _write_batch(self, results: List[Dict[str, Any]]) -> None:
         """Write a single batch of result dicts to the output file.
