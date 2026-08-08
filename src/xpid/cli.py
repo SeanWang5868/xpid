@@ -244,7 +244,7 @@ def iter_task_results(tasks: List[TaskPacket], jobs: int):
         return
 
     with multiprocessing.Pool(jobs, initializer=_worker_initializer) as pool:
-        yield from pool.imap_unordered(process_one_file, tasks, chunksize=1)
+        yield from pool.imap_unordered(process_one_file, tasks)
 
 
 # ---------------------------------------------------------------------------
@@ -464,14 +464,6 @@ def main():
 
     # Step 3: Execute
     ftype_arg = args.file_type.lower()
-
-    # Sort files by size (largest first) so that straggler structures
-    # start early and do not cluster at the tail of a parallel run.
-    try:
-        files = sorted(files, key=lambda p: p.stat().st_size, reverse=True)
-    except OSError:
-        pass
-
     tasks = [
         TaskPacket(f, ftype_arg, args.h_mode, str(output_dir),
                    args.separate, filters, args.verbose, args.model,

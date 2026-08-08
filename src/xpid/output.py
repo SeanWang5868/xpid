@@ -116,9 +116,10 @@ class ResultStreamer:
             if self.file_type == 'json':
                 self.file_handle.write('[\n')
 
-        self._writer_thread = threading.Thread(
-            target=self._run_writer, daemon=True, name="xpid-writer")
-        self._writer_thread.start()
+        # The writer thread is *not* started here.  It is lazily created
+        # on the first write_chunk call, which happens after the
+        # multiprocessing Pool has been forked.  This keeps the process
+        # free of threads at fork time.
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -135,6 +136,18 @@ class ResultStreamer:
         if self.parquet_writer:
             self.parquet_writer.close()
 
+    def _ensure_writer(self) -> None:
+        """Start the background writer thread if it has not been started yet.
+
+        Must be called after the multiprocessing Pool has been forked
+        (i.e. from the main loop, not from ``__enter__``).
+        """
+        if self._writer_thread is not None:
+            return
+        self._writer_thread = threading.Thread(
+            target=self._run_writer, daemon=True, name="xpid-writer")
+        self._writer_thread.start()
+
     def write_chunk(self, results: List[Dict[str, Any]]):
         """Enqueue a batch of result dicts for background writing.
 
@@ -144,6 +157,7 @@ class ResultStreamer:
         """
         if not results:
             return
+        self._ensure_writer()
         if self._writer_error is not None:
             raise RuntimeError(
                 "Background writer thread has failed; "
