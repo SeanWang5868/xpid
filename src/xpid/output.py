@@ -5,7 +5,9 @@ Result streaming to JSON, CSV, and Parquet formats.
 import csv
 import json
 import logging
+import queue
 import sys
+import threading
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -86,6 +88,9 @@ class ResultStreamer:
         self.parquet_schema = None
         self.parquet_columns = None
         self.is_first_chunk = True
+        self._write_queue: "queue.Queue[List[Dict[str, Any]]]" = queue.Queue(maxsize=200)
+        self._writer_thread: threading.Thread | None = None
+        self._sentinel = object()
 
         # Validate parquet dependencies early
         if self.file_type == 'parquet':
@@ -110,9 +115,16 @@ class ResultStreamer:
             if self.file_type == 'json':
                 self.file_handle.write('[\n')
 
+        self._writer_thread = threading.Thread(
+            target=self._run_writer, daemon=True, name="xpid-writer")
+        self._writer_thread.start()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self._write_queue.put(self._sentinel)
+        if self._writer_thread is not None:
+            self._writer_thread.join(timeout=120)
+
         if self.file_type == 'json' and self.file_handle:
             self.file_handle.write('\n]')
 
@@ -123,7 +135,23 @@ class ResultStreamer:
             self.parquet_writer.close()
 
     def write_chunk(self, results: List[Dict[str, Any]]):
-        """Write a batch of result dicts to the output file."""
+        """Enqueue a batch of result dicts for background writing."""
+        if results:
+            self._write_queue.put(results)
+
+    def _run_writer(self) -> None:
+        """Background thread: drain the write queue and persist batches."""
+        while True:
+            item = self._write_queue.get()
+            if item is self._sentinel:
+                break
+            self._write_batch(item)
+
+    def _write_batch(self, results: List[Dict[str, Any]]) -> None:
+        """Write a single batch of result dicts to the output file.
+
+        This is called exclusively by the background writer thread.
+        """
         if not results:
             return
 
