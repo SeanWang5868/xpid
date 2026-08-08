@@ -218,13 +218,20 @@ _STANDARD_RESIDUES = frozenset({
 
 
 def _worker_initializer() -> None:
-    """Pre-warm the shared monomer library in every worker process.
+    """Pre-warm the monomer-library path cache in every worker process.
 
-    This avoids a cold-start penalty on the first structure processed by
-    each worker.  The call is a no-op for monomers already loaded.
+    Only the path resolution and an empty :class:`gemmi.MonLib` are
+    created; no CIF files are read.  The heavy ``read_monomer_lib``
+    call is deferred to the first structure each worker processes,
+    where it is naturally staggered by per-structure read times.
     """
+    from xpid import monlib
     from xpid import hydrogen_prep
-    hydrogen_prep._get_shared_monlib(_STANDARD_RESIDUES)  # noqa: SLF001
+    # Resolve (and cache) the library path once per worker.
+    monlib.get_monomer_library_path()
+    # Create the empty MonLib that _get_shared_monlib will populate
+    # later on demand.
+    hydrogen_prep._get_shared_monlib(set())  # noqa: SLF001
 
 
 def iter_task_results(tasks: List[TaskPacket], jobs: int):
