@@ -36,3 +36,5 @@ install_dui2_after_ccp4_w_curl.sh
 _baseline_tests/
 _test_*/
 _final/
+run_all_resolution_bins.sh
+submit_xpid_resolution.sbatch
