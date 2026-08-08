@@ -218,8 +218,8 @@ def iter_task_results(tasks: List[TaskPacket], jobs: int):
             yield process_one_file(task)
         return
 
-    with multiprocessing.Pool(jobs, maxtasksperchild=100) as pool:
-        yield from pool.imap_unordered(process_one_file, tasks)
+    with multiprocessing.Pool(jobs) as pool:
+        yield from pool.imap_unordered(process_one_file, tasks, chunksize=1)
 
 
 # ---------------------------------------------------------------------------
