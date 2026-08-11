@@ -5,9 +5,9 @@ Input file resolution: PDB list parsing, local mirror lookup, directory scanning
 import logging
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger("xpid.resolver")
 
@@ -22,6 +22,7 @@ class InputResolution:
     standard_pdb: int = 0
     missing: int = 0
     missing_codes: tuple[str, ...] = ()
+    identities: Dict[Path, Tuple[str, str]] = field(default_factory=dict)
 
     def provenance_counts(self) -> Dict[str, int]:
         return {
@@ -30,6 +31,28 @@ class InputResolution:
             "standard_pdb_mirror": self.standard_pdb,
             "missing": self.missing,
         }
+
+    def identity_for(self, path: Path) -> Tuple[str, str]:
+        """Return the canonical structure identifier and input source."""
+        resolved = path.resolve()
+        return self.identities.get(
+            resolved, (_identifier_from_path(resolved), "direct"))
+
+
+def _identifier_from_path(path: Path) -> str:
+    """Derive a stable identifier for a direct, non-mirror input."""
+    name = path.name
+    lowered = name.lower()
+    for suffix in (
+            ".cif.gz", ".mmcif.gz", ".pdb.gz", ".ent.gz",
+            ".cif", ".mmcif", ".pdb", ".ent"):
+        if lowered.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    match = re.fullmatch(r"([0-9][A-Za-z0-9]{3})_final", name)
+    if match:
+        return match.group(1).lower()
+    return name.lower()
 
 
 def parse_pdb_list_file(list_path: Path) -> Set[str]:
@@ -98,6 +121,7 @@ def resolve_inputs(inputs: List[str], pdb_list: str,
     are provided.
     """
     final_files: Set[Path] = set()
+    identities: Dict[Path, Tuple[str, str]] = {}
 
     # 1. Direct file or directory inputs
     if inputs:
@@ -108,11 +132,17 @@ def resolve_inputs(inputs: List[str], pdb_list: str,
         for inp in inputs:
             path = Path(inp)
             if path.is_file():
-                final_files.add(path.resolve())
+                resolved = path.resolve()
+                final_files.add(resolved)
+                identities[resolved] = (
+                    _identifier_from_path(resolved), "direct")
             elif path.is_dir():
                 for p in path.rglob("*"):
                     if p.is_file() and p.name.lower().endswith(structure_suffixes):
-                        final_files.add(p.resolve())
+                        resolved = p.resolve()
+                        final_files.add(resolved)
+                        identities[resolved] = (
+                            _identifier_from_path(resolved), "directory")
 
     # 2. PDB list + mirror resolution
     if pdb_list:
@@ -137,21 +167,26 @@ def resolve_inputs(inputs: List[str], pdb_list: str,
 
         for code in codes:
             fpath = None
+            source = None
 
             # Priority 1: PDB-REDO
             if redo_root:
                 fpath = resolve_redo_path(redo_root, code)
                 if fpath:
                     found_redo += 1
+                    source = "pdb_redo"
 
             # Priority 2: Standard PDB
             if not fpath and pdb_root:
                 fpath = resolve_mirror_path(pdb_root, code)
                 if fpath:
                     found_pdb += 1
+                    source = "pdb_mirror"
 
             if fpath:
-                final_files.add(fpath)
+                resolved = fpath.resolve()
+                final_files.add(resolved)
+                identities[resolved] = (code, source or "pdb_mirror")
             else:
                 missing.append(code)
 
@@ -162,9 +197,11 @@ def resolve_inputs(inputs: List[str], pdb_list: str,
             standard_pdb=found_pdb,
             missing=len(missing),
             missing_codes=tuple(sorted(missing)),
+            identities=identities,
         )
 
-    return InputResolution(files=sorted(final_files))
+    return InputResolution(
+        files=sorted(final_files), identities=identities)
 
 
 def gather_inputs(inputs: List[str], pdb_list: str,

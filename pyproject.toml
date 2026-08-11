@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xpid"
-version = "2.1.4"
+version = "2.1.5"
 description = "Detector for XH-pi interactions in protein structures."
 readme = "README.md"
 requires-python = ">=3.9"

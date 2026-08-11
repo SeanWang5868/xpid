@@ -33,6 +33,7 @@ def _dedup_key(hit: Dict[str, Any]) -> tuple:
         hit.get("pi_chain"), hit.get("pi_res"), hit.get("pi_id"),
         hit.get("X_chain"), hit.get("X_res"), hit.get("X_id"),
         hit.get("X_atom"), hit.get("H_atom"), hit.get("sym_op"),
+        hit.get("symmetry_code", "1_555"),
     )
 
 
@@ -111,6 +112,7 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "ring_conformers.RingContext",
                 metrics: Dict[str, Any],
                 is_cone: bool = False,
                 combined_occ: float = 1.0, sym_op: int = 0,
+                symmetry_code: str = "1_555",
                 h_atom: Optional[gemmi.Atom] = None,
                 include_p_slab: bool = False,
                 include_candidate_metrics: bool = False,
@@ -191,6 +193,7 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "ring_conformers.RingContext",
         'angle_XPCN': _round_float(metrics['angle_XPCN'], 2) if metrics['angle_XPCN'] is not None else None,
         'angle_XH_Pi': _round_float(metrics['angle_XH_Pi'], 2) if metrics['angle_XH_Pi'] is not None else None,
         'sym_op': sym_op,
+        'symmetry_code': symmetry_code,
         '_combined_occ': float(combined_occ),
         '_pi_ring_key': rctx.mode,
         '_pi_alt': rctx.pi_alt,

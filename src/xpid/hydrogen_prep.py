@@ -1,15 +1,64 @@
-"""Gemmi-backed hydrogen preparation."""
+"""Gemmi-backed hydrogen preparation with auditable failure semantics."""
+from dataclasses import dataclass
 import gemmi
-import re
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from . import monlib
 
 logger = logging.getLogger("xpid.prep")
 _CACHED_MONLIB: Optional[gemmi.MonLib] = None
 _CACHED_LIB_PATH: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class TopologyPreparationReport:
+    model_index: int
+    status: str
+    attempts: int
+    connections_cleared: bool = False
+    message: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class HydrogenPreparationReport:
+    status: str
+    h_mode: int
+    model_reports: Tuple[TopologyPreparationReport, ...] = ()
+    missing_monomer_components: Tuple[str, ...] = ()
+
+    def to_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "h_mode": self.h_mode,
+            "missing_monomer_components": list(
+                self.missing_monomer_components),
+            "models": [
+                {
+                    "model_index": item.model_index,
+                    "status": item.status,
+                    "attempts": item.attempts,
+                    "connections_cleared": item.connections_cleared,
+                    "message": item.message,
+                }
+                for item in self.model_reports
+            ],
+        }
+
+
+@dataclass(frozen=True)
+class HydrogenPreparationResult:
+    structure: gemmi.Structure
+    report: HydrogenPreparationReport
+
+
+class HydrogenPreparationError(RuntimeError):
+    """Raised when Gemmi cannot prepare a chemically consistent topology."""
+
+    def __init__(self, message: str, report: HydrogenPreparationReport):
+        super().__init__(message)
+        self.report = report
 
 def _get_shared_monlib(residue_names: set) -> gemmi.MonLib:
     global _CACHED_MONLIB, _CACHED_LIB_PATH
@@ -85,51 +134,61 @@ def _synchronize_hydrogens(target: gemmi.Structure,
 def _prepare_topology_with_retries(structure: gemmi.Structure,
                                    monlib: gemmi.MonLib,
                                    h_change: gemmi.HydrogenChange,
-                                   model_index: int) -> None:
-    max_attempts = 10
-    for attempt in range(max_attempts):
+                                   model_index: int
+                                   ) -> TopologyPreparationReport:
+    """Prepare one model, allowing one explicitly reported link recovery.
+
+    A bad explicit link can be retried without the connection table, but the
+    recovery is marked ``partial`` because covalent links can affect hydrogen
+    placement.  Residues are never deleted to force topology preparation.
+    """
+    connections_cleared = False
+    for attempt in range(1, 3):
         try:
             gemmi.prepare_topology(
                 structure, monlib, model_index=model_index, h_change=h_change,
                 reorder=False, ignore_unknown_links=True)
-            return
+            return TopologyPreparationReport(
+                model_index=model_index,
+                status="partial" if connections_cleared else "success",
+                attempts=attempt,
+                connections_cleared=connections_cleared,
+            )
         except Exception as topo_err:
             err_msg = str(topo_err)
 
-            if "link" in err_msg.lower():
-                logger.warning("  -> Bad explicit link detected. Clearing connections and retrying...")
+            if "link" in err_msg.lower() and not connections_cleared:
+                logger.warning(
+                    "Bad explicit link detected in model %d; retrying "
+                    "without explicit connections.", model_index)
                 structure.connections.clear()
+                connections_cleared = True
                 continue
+            return TopologyPreparationReport(
+                model_index=model_index,
+                status="failed",
+                attempts=attempt,
+                connections_cleared=connections_cleared,
+                message=err_msg,
+            )
 
-            match = re.search(r"bonded to ([^/]+)/([^ ]+) ([^/]+)/([^ ]+) failed", err_msg)
-            if match:
-                bad_chain = match.group(1)
-                bad_seqid = match.group(3)
-
-                removed = False
-                if 0 <= model_index < len(structure):
-                    for chain in structure[model_index]:
-                        if chain.name == bad_chain:
-                            for i in range(len(chain)):
-                                if str(chain[i].seqid).strip() == bad_seqid.strip():
-                                    del chain[i]
-                                    removed = True
-                                    logger.warning(
-                                        f"  -> Removed twisted residue {bad_chain}/{bad_seqid} "
-                                        "from hydrogen-placement copy.")
-                                    break
-                        if removed:
-                            break
-
-                if removed:
-                    continue
-
-            logger.warning(f"  -> Topology incomplete after {attempt} retries: {err_msg}.")
-            return
+    return TopologyPreparationReport(
+        model_index=model_index,
+        status="failed",
+        attempts=2,
+        connections_cleared=connections_cleared,
+        message="Topology preparation exhausted all attempts.",
+    )
 
 
-def add_hydrogens_memory(structure: gemmi.Structure,
-                         h_change_val: int = 4) -> gemmi.Structure:
+def prepare_hydrogens_memory(
+        structure: gemmi.Structure,
+        h_change_val: int = 4) -> HydrogenPreparationResult:
+    """Prepare hydrogens and return both the structure and an audit report.
+
+    A failed topology raises :class:`HydrogenPreparationError`; it is never
+    converted into an apparently successful zero-hit structure.
+    """
     try:
         hydrogen_changes = {
             0: gemmi.HydrogenChange.NoChange,
@@ -143,7 +202,10 @@ def add_hydrogens_memory(structure: gemmi.Structure,
             raise ValueError(f"Unsupported Gemmi hydrogen mode: {h_change_val}")
         if h_change_val == 0:
             structure.setup_cell_images()
-            return structure
+            return HydrogenPreparationResult(
+                structure,
+                HydrogenPreparationReport("not_requested", h_change_val),
+            )
 
         all_codes = set()
         for model in structure:
@@ -151,18 +213,55 @@ def add_hydrogens_memory(structure: gemmi.Structure,
                 for residue in chain: all_codes.add(residue.name)
 
         monlib = _get_shared_monlib(all_codes)
+        missing_monomers = tuple(sorted(
+            code for code in all_codes if code not in monlib.monomers))
 
         working = structure.clone()
         h_change = hydrogen_changes[h_change_val]
+        model_reports = []
         for model_index in range(len(working)):
-            _prepare_topology_with_retries(
+            model_report = _prepare_topology_with_retries(
                 working, monlib, h_change, model_index)
+            model_reports.append(model_report)
+
+        failed = [item for item in model_reports if item.status == "failed"]
+        if failed:
+            report = HydrogenPreparationReport(
+                "failed", h_change_val, tuple(model_reports),
+                missing_monomers)
+            details = "; ".join(
+                f"model {item.model_index}: {item.message}"
+                for item in failed)
+            raise HydrogenPreparationError(
+                f"Hydrogen topology preparation failed ({details})", report)
+
         _synchronize_hydrogens(structure, working)
 
         structure.setup_cell_images()
-        return structure
+        status = (
+            "partial"
+            if missing_monomers or any(
+                item.status == "partial" for item in model_reports)
+            else "success"
+        )
+        return HydrogenPreparationResult(
+            structure,
+            HydrogenPreparationReport(
+                status, h_change_val, tuple(model_reports),
+                missing_monomers),
+        )
 
-    except Exception as e:
-        logger.error(f"Critical error in prep: {e}")
-        # Never return None here — return the original structure so the pipeline continues
-        return structure
+    except HydrogenPreparationError:
+        raise
+    except Exception as exc:
+        report = HydrogenPreparationReport("failed", h_change_val)
+        raise HydrogenPreparationError(
+            f"Critical error in hydrogen preparation: {exc}", report
+        ) from exc
+
+
+def add_hydrogens_memory(structure: gemmi.Structure,
+                         h_change_val: int = 4) -> gemmi.Structure:
+    """Backward-compatible structure-only wrapper with strict failures."""
+    return prepare_hydrogens_memory(
+        structure, h_change_val=h_change_val).structure

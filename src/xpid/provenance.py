@@ -10,7 +10,7 @@ import sys
 import platform
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, Mapping, Optional
+from typing import Dict, Any, List, Mapping, Optional
 
 import gemmi
 
@@ -74,6 +74,26 @@ def write_metadata(metadata: Dict[str, Any], output_dir: Path, stem: str) -> Opt
         path = output_dir / f"{stem}_metadata.json"
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(metadata, fh, indent=2, default=str)
+        return path
+    except OSError:
+        return None
+
+
+def write_diagnostics(records: List[Dict[str, Any]], output_dir: Path,
+                      stem: str) -> Optional[Path]:
+    """Atomically write per-structure chemical-preparation diagnostics."""
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"{stem}_diagnostics.json"
+        temporary = output_dir / f".{stem}_diagnostics.json.partial"
+        payload = {
+            "tool": "xpid",
+            "version": _try_import_xpid_version(),
+            "structures": records,
+        }
+        with open(temporary, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, default=str)
+        temporary.replace(path)
         return path
     except OSError:
         return None

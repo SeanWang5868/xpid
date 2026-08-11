@@ -44,7 +44,16 @@ P_RADIUS_BY_RING_SIZE = {
 P_SLAB_HALF_THICKNESS = 0.5
 
 MIN_COVALENT_XH = 0.5
-DIST_CUTOFF_H = 1.3
+# Element-specific upper bounds for an explicit covalent X-H/D bond.  A
+# single 1.3 A cutoff is not chemically valid for thiols and caused genuine
+# neutron S-D positions to disappear in ``--no-cone`` mode.
+COVALENT_XH_MAX = {
+    'C': 1.25,
+    'N': 1.25,
+    'O': 1.20,
+    'S': 1.55,
+}
+DIST_CUTOFF_H = max(COVALENT_XH_MAX.values())
 
 # Cation-π donor atoms (positively charged groups)
 CATION_DONORS = {

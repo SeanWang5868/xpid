@@ -51,6 +51,8 @@ P_SLAB_SYSTEM_SUMMARY_KEYS = (
 class TaskPacket(NamedTuple):
     """All parameters needed to process one structure file."""
     filepath: Path
+    pdb_code: str
+    input_source: str
     ftype_arg: str
     h_mode: int
     output_dir_str: str
@@ -70,6 +72,15 @@ class TaskPacket(NamedTuple):
     sym_contacts: bool
     include_water: bool
     max_b: float
+
+
+class WorkerResult(NamedTuple):
+    error: Optional[str]
+    hit_count: int
+    data: List[Dict[str, Any]]
+    output_path: Optional[str]
+    system_summary: Dict[str, int]
+    diagnostics: Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -150,22 +161,48 @@ def add_system_summary(total: Dict[str, int], chunk: Dict[str, int]):
 # ---------------------------------------------------------------------------
 
 def process_one_file(task: TaskPacket):
-    """Process a single structure file. Returns (error, count, results, path, system_summary)."""
+    """Process one structure and return results plus an audit record."""
     output_dir = Path(task.output_dir_str)
-    pdb_code = task.filepath.stem.split('.')[0].lower()
+    pdb_code = task.pdb_code
+    diagnostics: Dict[str, Any] = {
+        "pdb": pdb_code,
+        "input_path": str(task.filepath),
+        "input_source": task.input_source,
+        "hydrogen_preparation": {
+            "status": "not_requested",
+            "h_mode": task.h_mode,
+            "missing_monomer_components": [],
+            "models": [],
+        },
+        "incomplete_aromatic_rings": set(),
+        "cone_missing_parent_groups": set(),
+        "error": None,
+    }
+
+    def serializable_diagnostics() -> Dict[str, Any]:
+        diagnostics["incomplete_aromatic_rings"] = sorted(
+            diagnostics.get("incomplete_aromatic_rings", set()))
+        diagnostics["cone_missing_parent_groups"] = sorted(
+            diagnostics.get("cone_missing_parent_groups", set()))
+        return diagnostics
 
     try:
         structure = structure_io.read_structure(
             task.filepath, allow_remote_recovery=task.allow_remote_recovery)
 
         if not structure or len(structure) == 0:
-            return f"Empty or invalid structure: {task.filepath}", 0, [], None, empty_system_summary(task.include_p_slab)
+            error = f"Empty or invalid structure: {task.filepath}"
+            diagnostics["error"] = error
+            return WorkerResult(
+                error, 0, [], None,
+                empty_system_summary(task.include_p_slab),
+                serializable_diagnostics())
 
         if task.h_mode > 0:
-            structure = hydrogen_prep.add_hydrogens_memory(
+            prepared = hydrogen_prep.prepare_hydrogens_memory(
                 structure, h_change_val=task.h_mode)
-            if structure is None:
-                return f"Hydrogen addition failed: {task.filepath}", 0, [], None, empty_system_summary(task.include_p_slab)
+            structure = prepared.structure
+            diagnostics["hydrogen_preparation"] = prepared.report.to_dict()
 
         results = detector.detect_interactions_in_structure(
             structure,
@@ -185,6 +222,7 @@ def process_one_file(task: TaskPacket):
             sym_contacts=task.sym_contacts,
             include_water=task.include_water,
             max_b=task.max_b,
+            diagnostics=diagnostics,
         )
 
         count = len(results)
@@ -200,13 +238,24 @@ def process_one_file(task: TaskPacket):
                 include_sasa=task.include_sasa,
                 include_cooperativity=task.include_cooperativity) as streamer:
                 streamer.write_chunk(results)
-            return None, count, [], str(out_path), system_summary
+            return WorkerResult(
+                None, count, [], str(out_path), system_summary,
+                serializable_diagnostics())
         else:
-            return None, count, results, None, system_summary
+            return WorkerResult(
+                None, count, results, None, system_summary,
+                serializable_diagnostics())
 
     except Exception as e:
         import traceback
-        return f"{task.filepath}: {e}\n{traceback.format_exc()}", 0, [], None, empty_system_summary(task.include_p_slab)
+        if isinstance(e, hydrogen_prep.HydrogenPreparationError):
+            diagnostics["hydrogen_preparation"] = e.report.to_dict()
+        error = f"{task.filepath}: {e}\n{traceback.format_exc()}"
+        diagnostics["error"] = str(e)
+        return WorkerResult(
+            error, 0, [], None,
+            empty_system_summary(task.include_p_slab),
+            serializable_diagnostics())
 
 
 _STANDARD_RESIDUES = frozenset({
@@ -465,7 +514,8 @@ def main():
     # Step 3: Execute
     ftype_arg = args.file_type.lower()
     tasks = [
-        TaskPacket(f, ftype_arg, args.h_mode, str(output_dir),
+        TaskPacket(f, *input_resolution.identity_for(f),
+                   ftype_arg, args.h_mode, str(output_dir),
                    args.separate, filters, args.verbose, args.model,
                    cone_mode, args.include_p_slab, args.report_xh_candidates,
                    args.include_coordinates,
@@ -480,6 +530,7 @@ def main():
     error_logs: List[str] = []
     total_found = 0
     system_totals = empty_system_summary(args.include_p_slab)
+    diagnostics_records: List[Dict[str, Any]] = []
     progress_started = False
 
     try:
@@ -497,8 +548,10 @@ def main():
                 include_cooperativity=args.cooperativity)
             streamer.__enter__()
 
-        for i, (err, count, data, out_path, system_summary) in enumerate(
+        for i, (err, count, data, out_path, system_summary,
+                structure_diagnostics) in enumerate(
                 iter_task_results(tasks, args.jobs), 1):
+            diagnostics_records.append(structure_diagnostics)
             if err:
                 error_logs.append(err)
                 if progress_started:
@@ -520,6 +573,22 @@ def main():
 
         if streamer:
             streamer.__exit__(None, None, None)
+
+        diagnostics_path = provenance.write_diagnostics(
+            diagnostics_records, output_dir, args.output_name)
+
+        prep_status_counts: Dict[str, int] = {}
+        chemical_warning_structures = 0
+        for record in diagnostics_records:
+            prep_status = record.get(
+                "hydrogen_preparation", {}).get("status", "unknown")
+            prep_status_counts[prep_status] = (
+                prep_status_counts.get(prep_status, 0) + 1)
+            if (record.get("incomplete_aromatic_rings") or
+                    record.get("cone_missing_parent_groups") or
+                    record.get("hydrogen_preparation", {}).get(
+                        "missing_monomer_components")):
+                chemical_warning_structures += 1
 
         sys.stdout.write("\n")
         sys.stdout.flush()
@@ -559,12 +628,21 @@ def main():
                 ("Structures", len(files)),
                 ("Completed", len(files) - len(error_logs)),
                 ("Failed", len(error_logs)),
+                ("H preparation success",
+                 prep_status_counts.get("success", 0)),
+                ("H preparation partial",
+                 prep_status_counts.get("partial", 0)),
+                ("Chemical warnings", chemical_warning_structures),
             ]),
             ("Candidates" if args.report_xh_candidates else "Interactions",
              interaction_rows),
-            ("Output", [("Results", result_path)]),
+            ("Output", [
+                ("Results", result_path),
+                ("Diagnostics", diagnostics_path or "write failed"),
+            ]),
         ])
         logger.info("%s", summary)
+        return 1 if error_logs else 0
 
     except Exception as e:
         if progress_started:
@@ -573,8 +651,9 @@ def main():
         logger.error("Execution failed: %s", e)
         import traceback
         traceback.print_exc()
+        return 1
 
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-    main()
+    raise SystemExit(main())

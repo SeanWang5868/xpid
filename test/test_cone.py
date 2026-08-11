@@ -50,7 +50,7 @@ def test_ser_conformer_uses_group_specific_geometry():
     assert _angle(parent, x_pos, h_pos) == pytest.approx(108.539, abs=1e-8)
 
 
-def test_cys_cone_uses_ccp4_nuclear_geometry():
+def test_cys_cone_uses_neutron_validated_geometry():
     definition = donors.get_definition("CYS", "SG")
     parent = np.array([0.0, 0.0, 0.0])
     x_pos = np.array([1.812, 0.0, 0.0])
@@ -58,8 +58,8 @@ def test_cys_cone_uses_ccp4_nuclear_geometry():
     h_pos = cone.generate_conformers(
         parent, x_pos, definition)[0].hydrogen_positions[0]
 
-    assert np.linalg.norm(h_pos - x_pos) == pytest.approx(1.338, abs=1e-8)
-    assert _angle(parent, x_pos, h_pos) == pytest.approx(97.543, abs=1e-8)
+    assert np.linalg.norm(h_pos - x_pos) == pytest.approx(1.212, abs=1e-8)
+    assert _angle(parent, x_pos, h_pos) == pytest.approx(108.4, abs=1e-8)
 
 
 def test_methyl_conformer_contains_three_coupled_hydrogens():

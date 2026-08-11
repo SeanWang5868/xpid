@@ -79,6 +79,8 @@ FIELDS: Tuple[Field, ...] = (
     # -- Additional flags ---------------------------------------------------
     Field("is_pi_pi_tshaped", "int", "base", 0, "1 if donor is also part of a T-shaped π-π stack"),
     Field("sym_op", "int", "base", 0, "Symmetry operation index (0 = asymmetric unit)"),
+    Field("symmetry_code", "str", "base", "1_555",
+          "Full crystallographic symmetry code including lattice translation"),
     Field("seq_sep", "int", "base", 0, "Sequence separation (π residue - donor residue)"),
 
     # -- P-slab (conditional) -----------------------------------------------

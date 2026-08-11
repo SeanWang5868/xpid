@@ -363,6 +363,8 @@ def test_pdb_list_resolution_reports_sources_and_prioritizes_redo(tmp_path):
         "missing": 1,
     }
     assert resolved.missing_codes == ("3ghi",)
+    assert resolved.identity_for(redo_1abc) == ("1abc", "pdb_redo")
+    assert resolved.identity_for(pdb_2def) == ("2def", "pdb_mirror")
 
 
 def test_cation_pi_donors_are_excluded_from_core_detection():
@@ -735,6 +737,8 @@ def test_hydrogen_modes_are_applied_to_every_model_and_synchronized(monkeypatch)
             if residue[index].element.name.upper() in {"H", "D"}:
                 del residue[index]
         residue.add_atom(_atom("HX", "H", (float(model_index), 1.0, 1.0)))
+        return prep.TopologyPreparationReport(
+            model_index=model_index, status="success", attempts=1)
 
     monkeypatch.setattr(prep, "_prepare_topology_with_retries", fake_prepare)
 
@@ -752,6 +756,49 @@ def test_hydrogen_modes_are_applied_to_every_model_and_synchronized(monkeypatch)
         assert len(hydrogens) == 1
         assert hydrogens[0].name == "HX"
         assert hydrogens[0].pos.x == float(model_index)
+
+
+def test_hydrogen_topology_failure_is_not_silently_accepted(monkeypatch):
+    st = _structure_with_phe_and_og()
+    original_h_count = sum(
+        atom.element.name.upper() in {"H", "D"}
+        for model in st for chain in model for residue in chain
+        for atom in residue)
+    monkeypatch.setattr(prep, "_get_shared_monlib", lambda codes: gemmi.MonLib())
+    monkeypatch.setattr(
+        prep, "_prepare_topology_with_retries",
+        lambda working, monlib, h_change, model_index:
+            prep.TopologyPreparationReport(
+                model_index=model_index, status="failed", attempts=1,
+                message="synthetic topology failure"),
+    )
+
+    with pytest.raises(
+            prep.HydrogenPreparationError,
+            match="synthetic topology failure") as error:
+        prep.prepare_hydrogens_memory(st, h_change_val=4)
+
+    assert error.value.report.status == "failed"
+    assert sum(
+        atom.element.name.upper() in {"H", "D"}
+        for model in st for chain in model for residue in chain
+        for atom in residue) == original_h_count
+
+
+def test_hydrogen_report_marks_missing_monomers_as_partial(monkeypatch):
+    st = _structure_with_phe_and_og()
+    monkeypatch.setattr(prep, "_get_shared_monlib", lambda codes: gemmi.MonLib())
+    monkeypatch.setattr(
+        prep, "_prepare_topology_with_retries",
+        lambda working, monlib, h_change, model_index:
+            prep.TopologyPreparationReport(
+                model_index=model_index, status="success", attempts=1),
+    )
+
+    result = prep.prepare_hydrogens_memory(st, h_change_val=4)
+
+    assert result.report.status == "partial"
+    assert result.report.missing_monomer_components == ("PHE", "SER")
 
 
 @pytest.mark.parametrize(
@@ -782,7 +829,9 @@ def test_hydrogen_mode_numbers_match_gemmi(monkeypatch, mode, expected):
         prep,
         "_prepare_topology_with_retries",
         lambda working, monlib, h_change, model_index:
-            calls.append((h_change, model_index)),
+            (calls.append((h_change, model_index)) or
+             prep.TopologyPreparationReport(
+                 model_index=model_index, status="success", attempts=1)),
     )
 
     prep.add_hydrogens_memory(st, h_change_val=mode)
@@ -809,6 +858,29 @@ def test_dictionary_hydrogen_matching_normalizes_neutron_d_names(monkeypatch):
 
     assert len(hits) == 1
     assert hits[0]["H_atom"] == "DG"
+
+
+def test_explicit_cys_deuterium_uses_sulfur_specific_bond_cutoff(monkeypatch):
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    cys = gemmi.Residue()
+    cys.name = "CYS"
+    cys.seqid = _seqid(2)
+    cys.add_atom(_atom("SG", "S", (0.0, 0.0, 3.5)))
+    cys.add_atom(_atom("DG", "D", (0.0, 0.0, 2.162)))
+    st[0][0].add_residue(cys)
+    monkeypatch.setattr(
+        monomer_bonds, "get_bonded_hydrogen_names",
+        lambda residue, atom:
+            {"HG"} if (residue, atom) == ("CYS", "SG") else set(),
+    )
+
+    hits = core.detect_interactions_in_structure(
+        st, "test", cone_mode="none", annotate_cooperativity=False)
+
+    assert len(hits) == 1
+    assert hits[0]["X_atom"] == "SG"
+    assert hits[0]["H_atom"] == "DG"
+    assert hits[0]["H_source"] == "experimental"
 
 
 def test_unknown_ligand_requires_unambiguous_covalent_hydrogen(monkeypatch):
@@ -862,6 +934,60 @@ def test_same_residue_donor_is_excluded():
     phe.add_atom(_atom("H", "H", (0.0, 0.0, 2.0)))
 
     assert core.detect_interactions_in_structure(st, "test") == []
+
+
+def test_same_residue_symmetry_copy_is_a_valid_contact(monkeypatch):
+    st = gemmi.Structure()
+    st.cell = gemmi.UnitCell(10, 10, 10, 90, 90, 90)
+    st.spacegroup_hm = "P 1"
+    model = gemmi.Model("1")
+    chain = gemmi.Chain("A")
+    phe = gemmi.Residue()
+    phe.name = "PHE"
+    phe.seqid = _seqid(1)
+    ring = {
+        "CG": (6.4, 5.0, 0.5), "CD1": (5.7, 6.212, 0.5),
+        "CE1": (4.3, 6.212, 0.5), "CZ": (3.6, 5.0, 0.5),
+        "CE2": (4.3, 3.788, 0.5), "CD2": (5.7, 3.788, 0.5),
+    }
+    for name, xyz in ring.items():
+        phe.add_atom(_atom(name, "C", xyz))
+    phe.add_atom(_atom("N", "N", (5.0, 5.0, 8.0)))
+    phe.add_atom(_atom("H", "H", (5.0, 5.0, 9.0)))
+    chain.add_residue(phe)
+    model.add_chain(chain)
+    st.add_model(model)
+    monkeypatch.setattr(
+        monomer_bonds, "get_bonded_hydrogen_names",
+        lambda residue, atom:
+            {"H"} if (residue, atom) == ("PHE", "N") else set(),
+    )
+
+    assert core.detect_interactions_in_structure(
+        st.clone(), "test", cone_mode="none",
+        sym_contacts=False, annotate_cooperativity=False) == []
+
+    hits = core.detect_interactions_in_structure(
+        st, "test", cone_mode="none",
+        sym_contacts=True, annotate_cooperativity=False)
+
+    assert len(hits) == 1
+    assert hits[0]["sym_op"] == 0  # P1 translation has operation index 0.
+    assert hits[0]["symmetry_code"] == "1_554"
+    assert hits[0]["H_xyz_z"] == -1.0
+
+
+def test_cone_missing_parent_is_reported():
+    diagnostics = {}
+
+    hits = core.detect_interactions_in_structure(
+        _structure_with_phe_and_og(), "test", diagnostics=diagnostics,
+        annotate_cooperativity=False)
+
+    assert hits == []
+    assert diagnostics["cone_missing_parent_groups"] == {
+        "1:A:2:SER:OG:CB"
+    }
 
 
 def test_cli_system_summary_defaults_to_hudson_plevin_only():

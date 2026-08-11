@@ -152,8 +152,9 @@ a zero-thickness disk.
 
 Simple mode includes structure ID, resolution, donor/π-acceptor residue IDs, X
 atom, H atom, H source, the `is_hudson` and `is_plevin` labels, the main
-Hudson/Plevin geometry columns, TRP 5-ring flag, T-shaped π-π flag, and
-symmetry operation index. With `--include-p-slab`, simple mode also includes
+Hudson/Plevin geometry columns, TRP 5-ring flag, T-shaped π-π flag, symmetry
+operation index, and the full `symmetry_code` including lattice translation.
+With `--include-p-slab`, simple mode also includes
 `is_p_slab`, `P_radius`, `P_slab_half_thickness`, `h_proj_dist`, `H_ray_t`,
 and related ray-entry geometry.
 
@@ -183,6 +184,12 @@ alternative-conformer H-bond context.
 Verbose mode adds secondary-structure annotations, P center and X coordinates,
 sequence separation, and B-factors.
 
+Every run also writes `<output-name>_diagnostics.json`.  It records the input
+source and canonical structure ID, hydrogen-preparation status, missing monomer
+components, incomplete aromatic rings, Cone groups with a missing parent atom,
+and any per-structure failure.  A topology failure is not reported as a
+zero-interaction structure.
+
 Every default reported row satisfies Hudson or Plevin. The label columns are
 integer 1/0 flags and can be used for downstream filtering. The command-line
 summary prints Hudson-positive, Plevin-positive, Hudson/Plevin union, and
@@ -196,17 +203,20 @@ directional filters.
 
 ## Notes
 
-- Same-residue donor/π-acceptor contacts are excluded.
+- Same-residue donor/π-acceptor contacts within the asymmetric unit are
+  excluded. A crystallographic symmetry copy is treated as a distinct molecule.
 - The automatic monomer-library download is stored in the user cache, not inside the installed package directory.
 - Output column names currently remain ASCII (`pi_res`, `dist_X_Pi`) to avoid breaking existing scripts. `dist_X_Pi` now means `d(X, P plane)`, not distance from X to the ring centroid.
-- Rotatable donor groups (Ser, Thr, Tyr, Cys, Lys, methyl groups) use binary
+- Rotatable donor groups (Ser, Thr, Tyr, Cys and standard amino-acid methyl
+  groups) use binary
   cone detection by default. The detector keeps the observed heavy atoms fixed
   and asks whether a chemically valid hydrogen conformer satisfies Hudson or
   Plevin. OH/SH groups are sampled as one hydrogen through 360 degrees. CH3
-  and Lys NH3+ are sampled as complete three-hydrogen conformers through their
-  120-degree rotational period. Group-specific CCP4 bond lengths and angles
-  are used. Cys uses the CCP4 monomer-library nuclear S-H distance of
-  1.338 Angstrom and the restrained C-S-H angle of 97.543 degrees.
+  groups are sampled as complete three-hydrogen conformers through their
+  120-degree rotational period. Lys/Arg cationic donors remain excluded from
+  production XH-pi detection. Group-specific CCP4 bond lengths and angles
+  are used. Cys uses the neutron-validated S-H geometry of 1.212 Angstrom and
+  108.4 degrees.
 - Cone conformers are rejected for severe non-bonded clashes. A chemically
   valid H-bond contact is not treated as a clash. Potential conventional
   H-bonds are descriptive context and do not remove other sterically valid

@@ -21,6 +21,20 @@ HBOND_SEARCH_RADIUS = 3.0       # Å — search for acceptors around H
 HBOND_HA_MAX = 2.8              # Å — max H···A distance for competing H-bond
 HBOND_DHA_MIN = 120.0           # ° — min D–H···A angle for competing H-bond
 # ---------------------------------------------------------------------------
+
+
+def _nearest_mark_position(
+        ns: gemmi.NeighborSearch, reference: gemmi.Position,
+        mark: gemmi.NeighborSearch.Mark,
+        base_position: gemmi.Position) -> Tuple[gemmi.Position, str]:
+    position = ns.grid_cell.find_nearest_pbc_position(
+        reference, base_position, mark.image_idx)
+    nearest = ns.grid_cell.find_nearest_image(
+        reference, base_position, gemmi.Asu.Any)
+    is_symmetry_mate = (
+        mark.image_idx != 0 or position.dist(base_position) > 1e-5)
+    code = nearest.symmetry_code() if is_symmetry_mate else "1_555"
+    return position, code
 # Scoring
 # ---------------------------------------------------------------------------
 
@@ -124,6 +138,11 @@ def annotate_cone_hbond_context(
         donor_chain = hit.get("X_chain", "")
         donor_res = hit.get("X_res", "")
         donor_id = str(hit.get("X_id", ""))
+        pi_reference = gemmi.Position(
+            hit.get("pi_center_x", 0.0),
+            hit.get("pi_center_y", 0.0),
+            hit.get("pi_center_z", 0.0))
+        donor_symmetry_code = hit.get("symmetry_code", "1_555")
 
         # Search for nearby atoms
         best_acceptor = None
@@ -134,19 +153,23 @@ def annotate_cone_hbond_context(
         for mark in marks:
             cra = mark.to_cra(model)
             acceptor = cra.atom
+            acceptor_pos, acceptor_symmetry_code = _nearest_mark_position(
+                ns, pi_reference, mark, acceptor.pos)
 
             if not hbond_acceptors.is_hbond_acceptor(
                     cra.residue, acceptor):
                 continue
 
             # Skip atoms from the same residue as the donor
-            if (cra.chain.name == donor_chain and
+            if (acceptor_symmetry_code == donor_symmetry_code and
+                cra.chain.name == donor_chain and
                 cra.residue.name == donor_res and
                 str(cra.residue.seqid).strip() == donor_id):
                 continue
 
             # Compute H-bond geometry
-            a_pos_arr = np.array([mark.pos.x, mark.pos.y, mark.pos.z])
+            a_pos_arr = np.array([
+                acceptor_pos.x, acceptor_pos.y, acceptor_pos.z])
             d_ha = float(np.linalg.norm(a_pos_arr - h_pos_arr))
 
             if d_ha > HBOND_HA_MAX:
@@ -235,21 +258,30 @@ def annotate_explicit_hbond_context(
         donor_chain = hit.get("X_chain", "")
         donor_res = hit.get("X_res", "")
         donor_id = str(hit.get("X_id", ""))
+        pi_reference = gemmi.Position(
+            hit.get("pi_center_x", 0.0),
+            hit.get("pi_center_y", 0.0),
+            hit.get("pi_center_z", 0.0))
+        donor_symmetry_code = hit.get("symmetry_code", "1_555")
 
         marks = ns.find_atoms(h_pos, radius=HBOND_SEARCH_RADIUS)
         found = False
 
         for mark in marks:
             cra = mark.to_cra(model)
+            acceptor_pos, acceptor_symmetry_code = _nearest_mark_position(
+                ns, pi_reference, mark, cra.atom.pos)
             if not hbond_acceptors.is_hbond_acceptor(
                     cra.residue, cra.atom):
                 continue
-            if (cra.chain.name == donor_chain and
+            if (acceptor_symmetry_code == donor_symmetry_code and
+                cra.chain.name == donor_chain and
                 cra.residue.name == donor_res and
                 str(cra.residue.seqid).strip() == donor_id):
                 continue
 
-            a_pos_arr = np.array([mark.pos.x, mark.pos.y, mark.pos.z])
+            a_pos_arr = np.array([
+                acceptor_pos.x, acceptor_pos.y, acceptor_pos.z])
             d_ha = float(np.linalg.norm(a_pos_arr - h_pos_arr))
             if d_ha > HBOND_HA_MAX:
                 continue

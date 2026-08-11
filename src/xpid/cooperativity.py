@@ -30,6 +30,7 @@ def _donor_key(hit: Dict[str, Any]) -> Tuple:
         hit.get("X_id", ""),
         hit.get("X_atom", ""),
         hit.get("sym_op", 0),
+        hit.get("symmetry_code", "1_555"),
     )
 
 
