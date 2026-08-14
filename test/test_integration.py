@@ -185,8 +185,19 @@ def test_cli_version_reports_installed_package_version(capsys):
     assert capsys.readouterr().out == f"xpid {__version__}\n"
 
 
-def test_cli_short_v_remains_verbose():
-    args = cli._build_parser().parse_args(["-v", "dummy.cif"])
+def test_cli_short_v_reports_installed_package_version(capsys):
+    parser = cli._build_parser()
+    parser.prog = "xpid"
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["-v"])
+
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out == f"xpid {__version__}\n"
+
+
+def test_cli_long_verbose_enables_detailed_output():
+    args = cli._build_parser().parse_args(["--verbose", "dummy.cif"])
 
     assert args.verbose is True
 

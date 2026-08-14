@@ -45,14 +45,14 @@ def _three(parent: str, kind: RotatableGroupKind, element: str, length: float,
     )
 
 
-# Bond lengths and parent-X-H angles follow standard CCP4 geometry except
-# where an independently validated residue-specific model is frozen.  Cys S-H
-# uses the neutron-supported production parameters established for XPID.
+# X-H bond lengths represent nuclear positions and follow the CCP4
+# ``value_dist_nucleus`` convention.  Parent-X-H angles follow the standard
+# CCP4 geometry, including the non-tetrahedral Cys C-beta-S-H angle.
 ROTATABLE_GROUPS: Dict[Tuple[str, str], RotatableGroupDefinition] = {
     ("SER", "OG"): _single("CB", "O", 0.972, 108.539),
     ("THR", "OG1"): _single("CB", "O", 0.972, 109.544),
     ("TYR", "OH"): _single("CZ", "O", 0.966, 109.970),
-    ("CYS", "SG"): _single("CB", "S", 1.212, 108.4),
+    ("CYS", "SG"): _single("CB", "S", 1.338, 97.543),
     ("LYS", "NZ"): _three(
         "CE", RotatableGroupKind.ROTATABLE_NH3, "N", 1.018, 109.659),
 
