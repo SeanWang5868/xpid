@@ -303,7 +303,7 @@ def iter_task_results(tasks: List[TaskPacket], jobs: int):
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="XH-π interaction detector")
     parser.add_argument(
-        '--version', action='version', version=f'%(prog)s {__version__}',
+        '-v', '--version', action='version', version=f'%(prog)s {__version__}',
         help="Show the installed XPID version and exit.",
     )
     parser.add_argument('inputs', nargs='*', help="PDB/CIF files or directories")
@@ -320,7 +320,7 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Filename for merged output.")
     out.add_argument('--file-type', default='json',
                      choices=['json', 'csv', 'parquet'], help="Output format.")
-    out.add_argument('-v', '--verbose', action='store_true',
+    out.add_argument('--verbose', action='store_true',
                      help="Include detailed geometric columns.")
     out.add_argument('--include-coordinates', action='store_true',
                      help="Include absolute pi-center, X, H coordinates, pi normal, and X-side columns.")
