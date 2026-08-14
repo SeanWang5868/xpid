@@ -82,7 +82,7 @@ def write_diagnostics(records: List[Dict[str, Any]], output_dir: Path,
         temporary = output_dir / f".{stem}_diagnostics.json.partial"
         payload = {
             "tool": "xpid",
-            "version": _try_import_xpid_version(),
+            "version": __version__,
             "structures": records,
         }
         with open(temporary, "w", encoding="utf-8") as fh:

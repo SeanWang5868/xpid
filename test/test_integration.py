@@ -1,5 +1,6 @@
 import csv
 import inspect
+import json
 from pathlib import Path
 
 import gemmi
@@ -161,6 +162,17 @@ def test_provenance_records_input_resolution_counts(tmp_path):
         input_resolution=counts)
 
     assert metadata["input_resolution"] == counts
+
+
+def test_diagnostics_records_package_version(tmp_path):
+    records = [{"pdb": "1abc", "error": None}]
+
+    path = provenance.write_diagnostics(records, tmp_path, "results")
+
+    assert path == tmp_path / "results_diagnostics.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["version"] == __version__
+    assert payload["structures"] == records
 
 
 def test_cli_parser_default_cone_auto_and_p_slab_off():
