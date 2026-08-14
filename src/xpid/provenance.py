@@ -14,13 +14,7 @@ from typing import Dict, Any, List, Mapping, Optional
 
 import gemmi
 
-
-def _try_import_xpid_version() -> str:
-    try:
-        from importlib.metadata import version
-        return version("xpid")
-    except Exception:
-        return "unknown"
+from ._version import __version__
 
 
 def build_metadata(
@@ -33,7 +27,7 @@ def build_metadata(
     """Build a dictionary of provenance information from the argparse namespace."""
     metadata = {
         "tool": "xpid",
-        "version": _try_import_xpid_version(),
+        "version": __version__,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "python": sys.version.split()[0],
         "platform": platform.platform(),

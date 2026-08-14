@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xpid"
-version = "2.1.5"
+dynamic = ["version"]
 description = "Detector for XH-pi interactions in protein structures."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -43,6 +43,9 @@ namespaces = false
 
 [tool.setuptools.package-data]
 xpid = ["monomers/*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "xpid._version.__version__"}
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -11,12 +11,12 @@ from pathlib import Path
 from typing import List, Dict, Any, NamedTuple, Optional, Sequence, Tuple
 
 try:
-    from xpid import hydrogen_prep, detector, config, structure_io
+    from xpid import __version__, hydrogen_prep, detector, config, structure_io
     from xpid.output import ResultStreamer
     from xpid.resolver import resolve_inputs
 except ImportError:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from xpid import hydrogen_prep, detector, config, structure_io
+    from xpid import __version__, hydrogen_prep, detector, config, structure_io
     from xpid.output import ResultStreamer
     from xpid.resolver import resolve_inputs
 from xpid import provenance
@@ -302,6 +302,10 @@ def iter_task_results(tasks: List[TaskPacket], jobs: int):
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="XH-π interaction detector")
+    parser.add_argument(
+        '--version', action='version', version=f'%(prog)s {__version__}',
+        help="Show the installed XPID version and exit.",
+    )
     parser.add_argument('inputs', nargs='*', help="PDB/CIF files or directories")
     parser.add_argument('--pdb-list', type=str, help="Text file with PDB codes")
     parser.add_argument('--pdb-mirror', type=str, help="Local PDB mirror root")

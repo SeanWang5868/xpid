@@ -5,7 +5,8 @@ from pathlib import Path
 import gemmi
 import pytest
 from xpid import (
-    XPIDError, api, cli, core, config, detect, hydrogen_prep as prep,
+    XPIDError, __version__, api, cli, core, config, detect,
+    hydrogen_prep as prep,
     monomer_bonds, output, provenance, resolver,
 )
 
@@ -136,6 +137,7 @@ def test_provenance_records_real_cone_mode_and_paths(tmp_path):
     metadata = provenance.build_metadata(
         args, output_path, "/monomers", file_count=3)
 
+    assert metadata["version"] == __version__
     assert metadata["output"] == str(output_path.resolve())
     assert metadata["monomer_library"] == "/monomers"
     assert metadata["parameters"]["cone_mode"] == "auto"
@@ -170,6 +172,23 @@ def test_cli_parser_default_cone_auto_and_p_slab_off():
     assert args.report_xh_candidates is False
     assert args.include_coordinates is False
     assert args.residue_pair is None
+
+
+def test_cli_version_reports_installed_package_version(capsys):
+    parser = cli._build_parser()
+    parser.prog = "xpid"
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["--version"])
+
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out == f"xpid {__version__}\n"
+
+
+def test_cli_short_v_remains_verbose():
+    args = cli._build_parser().parse_args(["-v", "dummy.cif"])
+
+    assert args.verbose is True
 
 
 def test_cli_parser_accepts_residue_pair_selectors():
