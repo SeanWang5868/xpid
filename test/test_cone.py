@@ -224,6 +224,9 @@ def test_acceptor_protonation_ignores_incompatible_hydrogen_altloc():
     assert acceptors.is_hbond_acceptor(met, sulfur) is True
 
     met.add_atom(_atom("H2", "H", (0.9, 0.0, 0.0), altloc="B"))
+    # Gemmi may reallocate the residue's atom vector in add_atom(); reacquire
+    # the wrapper instead of retaining a potentially invalid C++ reference.
+    sulfur = next(atom for atom in met if atom.name == "SD")
     assert acceptors.is_hbond_acceptor(met, sulfur) is False
 
 

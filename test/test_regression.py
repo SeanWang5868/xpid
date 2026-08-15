@@ -1,24 +1,28 @@
-import pytest
-pytestmark = pytest.mark.slow
-
 """Regression tests on real PDB structure 5FJJ.
 
 These tests detect changes in Xpid's detection behaviour by checking
 invariant properties (hit counts, system labels, column presence)
 against known values for a benchmark structure.
 """
+import os
 from pathlib import Path
 
 import pytest
 from xpid import core, structure_io, prep
 
-_5FJJ = Path(__file__).resolve().parent.parent / "5fjj.cif.gz"
+pytestmark = pytest.mark.slow
+
+_DEFAULT_5FJJ = Path(__file__).resolve().parent.parent / "5fjj.cif.gz"
+_5FJJ = Path(os.environ.get("XPID_BENCHMARK_5FJJ", _DEFAULT_5FJJ))
 
 
 @pytest.fixture(scope="module")
 def structure_5fjj():
     """Read 5FJJ once for all tests in this module."""
-    assert _5FJJ.exists(), f"Benchmark structure not found: {_5FJJ}"
+    if not _5FJJ.exists():
+        pytest.skip(
+            "Optional 5FJJ benchmark not available. Place 5fjj.cif.gz in "
+            "the repository root or set XPID_BENCHMARK_5FJJ.")
     st = structure_io.read_structure(str(_5FJJ))
     st = prep.add_hydrogens_memory(st, h_change_val=4)
     return st
