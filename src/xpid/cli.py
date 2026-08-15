@@ -172,6 +172,8 @@ def process_one_file(task: TaskPacket):
             "status": "not_requested",
             "h_mode": task.h_mode,
             "missing_monomer_components": [],
+            "skipped_residues": [],
+            "protected_neighbor_residues": [],
             "models": [],
         },
         "incomplete_aromatic_rings": set(),
@@ -198,11 +200,13 @@ def process_one_file(task: TaskPacket):
                 empty_system_summary(task.include_p_slab),
                 serializable_diagnostics())
 
+        excluded_donor_residues = set()
         if task.h_mode > 0:
             prepared = hydrogen_prep.prepare_hydrogens_memory(
                 structure, h_change_val=task.h_mode)
             structure = prepared.structure
             diagnostics["hydrogen_preparation"] = prepared.report.to_dict()
+            excluded_donor_residues = prepared.report.excluded_donor_keys()
 
         results = detector.detect_interactions_in_structure(
             structure,
@@ -222,6 +226,7 @@ def process_one_file(task: TaskPacket):
             sym_contacts=task.sym_contacts,
             include_water=task.include_water,
             max_b=task.max_b,
+            excluded_donor_residues=excluded_donor_residues,
             diagnostics=diagnostics,
         )
 
@@ -556,6 +561,23 @@ def main():
                 structure_diagnostics) in enumerate(
                 iter_task_results(tasks, args.jobs), 1):
             diagnostics_records.append(structure_diagnostics)
+            preparation = structure_diagnostics.get(
+                "hydrogen_preparation", {})
+            skipped_residues = preparation.get("skipped_residues", [])
+            if skipped_residues:
+                if progress_started:
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                locations = ", ".join(
+                    f"{item['chain']}/{item['residue_name']} "
+                    f"{item['seqid']}"
+                    for item in skipped_residues[:5])
+                suffix = ", ..." if len(skipped_residues) > 5 else ""
+                logger.warning(
+                    "Partial H preparation for %s: skipped %d residue(s) "
+                    "(%s%s); heavy atoms were retained.",
+                    structure_diagnostics.get("pdb", "unknown"),
+                    len(skipped_residues), locations, suffix)
             if err:
                 error_logs.append(err)
                 if progress_started:
@@ -583,15 +605,22 @@ def main():
 
         prep_status_counts: Dict[str, int] = {}
         chemical_warning_structures = 0
+        skipped_residue_count = 0
+        protected_neighbor_count = 0
         for record in diagnostics_records:
-            prep_status = record.get(
-                "hydrogen_preparation", {}).get("status", "unknown")
+            preparation = record.get("hydrogen_preparation", {})
+            prep_status = preparation.get("status", "unknown")
             prep_status_counts[prep_status] = (
                 prep_status_counts.get(prep_status, 0) + 1)
+            skipped_residue_count += len(
+                preparation.get("skipped_residues", []))
+            protected_neighbor_count += len(
+                preparation.get("protected_neighbor_residues", []))
             if (record.get("incomplete_aromatic_rings") or
                     record.get("cone_missing_parent_groups") or
-                    record.get("hydrogen_preparation", {}).get(
-                        "missing_monomer_components")):
+                    preparation.get("missing_monomer_components") or
+                    preparation.get("skipped_residues") or
+                    preparation.get("protected_neighbor_residues")):
                 chemical_warning_structures += 1
 
         sys.stdout.write("\n")
@@ -636,6 +665,8 @@ def main():
                  prep_status_counts.get("success", 0)),
                 ("H preparation partial",
                  prep_status_counts.get("partial", 0)),
+                ("H-prep residues skipped", skipped_residue_count),
+                ("Polymer neighbors protected", protected_neighbor_count),
                 ("Chemical warnings", chemical_warning_structures),
             ]),
             ("Candidates" if args.report_xh_candidates else "Interactions",

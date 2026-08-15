@@ -132,7 +132,10 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                      include_water: bool = False,
                                      max_b: float = 0.0, compute_sasa: bool = False,
                                      annotate_cooperativity: bool = True,
-                                     diagnostics: Optional[Dict[str, Any]] = None
+                                     diagnostics: Optional[Dict[str, Any]] = None,
+                                     excluded_donor_residues: Optional[
+                                         Set[tuple[int, str, str, str]]
+                                     ] = None
                                      ) -> List[Dict[str, Any]]:
     results = []
     if not structure or len(structure) == 0: return []
@@ -145,20 +148,20 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
     if model_mode == 'all':
         for i, m in enumerate(structure):
             m_name = getattr(m, 'name', str(i+1))
-            models_with_ids.append((m, m_name))
+            models_with_ids.append((i, m, m_name))
     else:
         try:
             idx = int(model_mode)
             if 0 <= idx < len(structure):
                 m = structure[idx]
                 m_name = getattr(m, 'name', str(idx+1))
-                models_with_ids = [(m, m_name)]
+                models_with_ids = [(idx, m, m_name)]
             else:
                 return []
         except ValueError:
             m = structure[0]
             m_name = getattr(m, 'name', "1")
-            models_with_ids = [(m, m_name)]
+            models_with_ids = [(0, m, m_name)]
 
     resolution = structure.resolution if structure.resolution else 0.0
 
@@ -172,7 +175,9 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
     if sym_contacts:
         structure.setup_cell_images()
 
-    for model, model_id in models_with_ids:
+    excluded_donor_residues = excluded_donor_residues or set()
+
+    for model_index, model, model_id in models_with_ids:
         ns = gemmi.NeighborSearch(model, structure.cell, config.DIST_SEARCH_LIMIT)
         ns.populate(include_h=True)
         pair_keys = _resolve_residue_pair_keys(model, residue_pair)
@@ -201,11 +206,13 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                 f"{res_name}:{mode}")
                     for pi_alt, pi_atoms in ring_variants:
                         results.extend(_detect_residue(
-                            pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
+                            pdb_name, resolution, model, model_index, model_id,
+                            chain, residue, ns, ss_index,
                             pi_atoms, pi_alt, mode, filter_donor, filter_donor_atom, cone_mode,
                             include_p_slab, report_xh_candidates, include_coordinates,
                             pair_keys, ring_size, sasa_map, min_occ,
                             sym_contacts=sym_contacts, max_b=max_b,
+                            excluded_donor_residues=excluded_donor_residues,
                             diagnostics=diagnostics,
                         ))
     hits = _hits._deduplicate_hits(results, prefer_directional=not report_xh_candidates)
@@ -259,7 +266,8 @@ def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.Neighbor
 
     return False
 
-def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, ss_index,
+def _detect_residue(pdb_name, resolution, model, model_index, model_id,
+                    chain, residue, ns, ss_index,
                     pi_atoms: List[gemmi.Atom], pi_alt: str, mode: str, filter_donor: Optional[List[str]],
                     filter_donor_atom: Optional[List[str]], cone_mode: str,
                     include_p_slab: bool, report_xh_candidates: bool,
@@ -267,6 +275,8 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
                     ring_size: int, sasa_map: Dict,
                     min_occ: float, sym_contacts: bool = False,
                     max_b: float = 0.0,
+                    excluded_donor_residues: Optional[
+                        Set[tuple[int, str, str, str]]] = None,
                     diagnostics: Optional[Dict[str, Any]] = None):
     hits = []
 
@@ -302,6 +312,12 @@ def _detect_residue(pdb_name, resolution, model, model_id, chain, residue, ns, s
         x_res_name = x_res.name
         x_elem = x_atom.element.name.upper()
         if x_elem not in config.TARGET_ELEMENTS_X:
+            continue
+        donor_residue_key = (
+            model_index, x_cra.chain.name,
+            str(x_res.seqid).strip(), x_res_name)
+        if (excluded_donor_residues and
+                donor_residue_key in excluded_donor_residues):
             continue
         if not _pair_allows_donor_residue(pair_keys, chain.name, residue, x_cra.chain.name, x_res):
             continue

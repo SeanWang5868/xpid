@@ -47,8 +47,9 @@ def detect(
 
     try:
         structure = structure_io.read_structure(path_obj)
-        structure = hydrogen_prep.add_hydrogens_memory(
+        prepared = hydrogen_prep.prepare_hydrogens_memory(
             structure, h_change_val=h_mode)
+        structure = prepared.structure
 
         if not structure:
             return []
@@ -70,7 +71,8 @@ def detect(
             min_occ=min_occ,
             sym_contacts=sym_contacts,
             include_water=include_water,
-            max_b=max_b
+            max_b=max_b,
+            excluded_donor_residues=prepared.report.excluded_donor_keys(),
         )
         return results
 

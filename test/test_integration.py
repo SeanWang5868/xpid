@@ -827,6 +827,100 @@ def test_hydrogen_topology_failure_is_not_silently_accepted(monkeypatch):
         for atom in residue) == original_h_count
 
 
+def test_localized_hydrogen_failure_skips_only_that_residue(monkeypatch):
+    st = _structure_with_phe_and_og()
+    failed_residue = st[0][0][1]
+    failed_residue.entity_type = gemmi.EntityType.NonPolymer
+    monkeypatch.setattr(prep, "_get_shared_monlib", lambda codes: gemmi.MonLib())
+    calls = []
+
+    def fake_prepare(working, monlib, h_change, model_index):
+        calls.append(model_index)
+        if any(residue.name == "SER" for chain in working[model_index]
+               for residue in chain):
+            return prep.TopologyPreparationReport(
+                model_index=model_index, status="failed", attempts=1,
+                message="definition not found for A/SER 2/OG")
+        return prep.TopologyPreparationReport(
+            model_index=model_index, status="success", attempts=1)
+
+    monkeypatch.setattr(prep, "_prepare_topology_with_retries", fake_prepare)
+
+    result = prep.prepare_hydrogens_memory(st, h_change_val=4)
+
+    assert calls == [0, 0]
+    assert result.report.status == "partial"
+    assert [item.key for item in result.report.skipped_residues] == [
+        (0, "A", "2", "SER")]
+    assert result.report.protected_neighbor_residues == ()
+    assert len(st[0][0]) == 2
+    assert st[0][0][1].find_atom("OG", "\0") is not None
+    assert all(atom.element.name.upper() not in {"H", "D"}
+               for atom in st[0][0][1])
+
+
+def test_polymer_failure_protects_adjacent_residue_hydrogens(monkeypatch):
+    st = gemmi.Structure()
+    st.cell = gemmi.UnitCell(30, 30, 30, 90, 90, 90)
+    model = gemmi.Model("1")
+    chain = gemmi.Chain("A")
+    for seqid, name in ((1, "ALA"), (2, "6MZ"), (3, "ALA")):
+        residue = gemmi.Residue()
+        residue.name = name
+        residue.seqid = _seqid(seqid)
+        residue.entity_type = gemmi.EntityType.Polymer
+        residue.add_atom(_atom("C", "C", (float(seqid), 0.0, 0.0)))
+        residue.add_atom(_atom("HX", "H", (float(seqid), 0.0, 1.0)))
+        chain.add_residue(residue)
+    model.add_chain(chain)
+    st.add_model(model)
+    monkeypatch.setattr(prep, "_get_shared_monlib", lambda codes: gemmi.MonLib())
+
+    def fake_prepare(working, monlib, h_change, model_index):
+        if any(residue.name == "6MZ" for chain in working[model_index]
+               for residue in chain):
+            return prep.TopologyPreparationReport(
+                model_index=model_index, status="failed", attempts=1,
+                message="definition not found for A/6MZ 2/OP2")
+        return prep.TopologyPreparationReport(
+            model_index=model_index, status="success", attempts=1)
+
+    monkeypatch.setattr(prep, "_prepare_topology_with_retries", fake_prepare)
+
+    result = prep.prepare_hydrogens_memory(st, h_change_val=4)
+
+    assert result.report.status == "partial"
+    assert result.report.excluded_donor_keys() == {
+        (0, "A", "1", "ALA"),
+        (0, "A", "2", "6MZ"),
+        (0, "A", "3", "ALA"),
+    }
+    assert len(st[0][0]) == 3
+    assert all(atom.element.name.upper() not in {"H", "D"}
+               for residue in st[0][0] for atom in residue)
+
+
+def test_excluded_residue_cannot_return_as_explicit_or_cone_donor():
+    st = _structure_with_phe_and_og()
+    st[0][0][1].add_atom(_atom("CB", "C", (1.42, 0.0, 3.0)))
+    excluded_ser = {(0, "A", "2", "SER")}
+
+    assert core.detect_interactions_in_structure(
+        st, "test", cone_mode="none",
+        excluded_donor_residues=excluded_ser) == []
+    assert core.detect_interactions_in_structure(
+        st, "test", cone_mode="auto",
+        excluded_donor_residues=excluded_ser) == []
+
+    # Donor exclusion is capability-specific: the same residue can still be
+    # used as a chemically valid pi ring when only its donor H preparation is
+    # untrusted.
+    hits = core.detect_interactions_in_structure(
+        st, "test", cone_mode="none",
+        excluded_donor_residues={(0, "A", "1", "PHE")})
+    assert len(hits) == 1
+
+
 def test_hydrogen_report_marks_missing_monomers_as_partial(monkeypatch):
     st = _structure_with_phe_and_og()
     monkeypatch.setattr(prep, "_get_shared_monlib", lambda codes: gemmi.MonLib())

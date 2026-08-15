@@ -187,8 +187,17 @@ sequence separation, and B-factors.
 Every run also writes `<output-name>_diagnostics.json`.  It records the input
 source and canonical structure ID, hydrogen-preparation status, missing monomer
 components, incomplete aromatic rings, Cone groups with a missing parent atom,
-and any per-structure failure.  A topology failure is not reported as a
-zero-interaction structure.
+and any per-structure failure.  If Gemmi identifies one specific residue whose
+atom names or topology are incompatible with its monomer definition, Xpid
+marks hydrogen preparation as `partial`, retains that residue's experimental
+heavy atoms in the steric environment, but disables its donor capability.  A
+chemically complete aromatic ring in the same residue can still serve as the
+pi system.  Hydrogens on adjacent polymer residues are also suppressed when a
+temporary chain break could create false terminal donors.  The skipped and
+protected residue identities are recorded in the diagnostics JSON; the run
+audit prints skipped identities and aggregate counts.  Failures that cannot be
+localized safely still fail the whole structure; they are never reported as a
+zero-interaction result.
 
 Every default reported row satisfies Hudson or Plevin. The label columns are
 integer 1/0 flags and can be used for downstream filtering. The command-line
