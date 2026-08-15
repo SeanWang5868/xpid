@@ -11,12 +11,13 @@ from xpid import donors
 from xpid import xhpi_criteria
 
 
-def _atom(name, element, xyz=(0.0, 0.0, 0.0), occ=1.0):
+def _atom(name, element, xyz=(0.0, 0.0, 0.0), occ=1.0, altloc="\0"):
     atom = gemmi.Atom()
     atom.name = name
     atom.element = gemmi.Element(element)
     atom.pos = gemmi.Position(*xyz)
     atom.occ = occ
+    atom.altloc = altloc
     return atom
 
 
@@ -214,11 +215,107 @@ def test_hydroxyl_oxygen_remains_acceptor_when_protonated():
     assert acceptors.is_hbond_acceptor(ser, oxygen) is True
 
 
+def test_acceptor_protonation_ignores_incompatible_hydrogen_altloc():
+    sulfur = _atom("SD", "S", altloc="B")
+    hydrogen_a = _atom("H1", "H", (0.9, 0.0, 0.0), altloc="A")
+    met = _residue("MET", [sulfur, hydrogen_a])
+    sulfur = next(atom for atom in met if atom.name == "SD")
+
+    assert acceptors.is_hbond_acceptor(met, sulfur) is True
+
+    met.add_atom(_atom("H2", "H", (0.9, 0.0, 0.0), altloc="B"))
+    assert acceptors.is_hbond_acceptor(met, sulfur) is False
+
+
 def test_altloc_compatibility():
     assert acceptors.altlocs_compatible("", "A")
     assert acceptors.altlocs_compatible("A", "")
     assert acceptors.altlocs_compatible("A", "A")
     assert not acceptors.altlocs_compatible("A", "B")
+
+
+@pytest.mark.parametrize("parent_order", [("A", "B"), ("B", "A")])
+def test_donor_parent_resolution_matches_altloc_independent_of_atom_order(
+        parent_order):
+    parents = {
+        "A": _atom("CG", "C", (0.0, 1.5, 0.0), altloc="A"),
+        "B": _atom("CG", "C", (1.5, 0.0, 0.0), occ=0.35, altloc="B"),
+    }
+    donor = _atom("CD1", "C", (3.0, 0.0, 0.0), occ=0.35, altloc="B")
+    residue = _residue(
+        "LEU", [parents[alt] for alt in parent_order] + [donor])
+    donor = next(atom for atom in residue
+                 if atom.name == "CD1" and atom.altloc == "B")
+
+    resolution = donors.resolve_donor_conformers(
+        residue, donor, donors.get_definition("LEU", "CD1"),
+        model_index=2, chain_name="A")
+
+    assert resolution.issue is None
+    assert len(resolution.conformers) == 1
+    conformer = resolution.conformers[0]
+    assert conformer.model_index == 2
+    assert conformer.x_altloc == "B"
+    assert conformer.parent_altloc == "B"
+    assert conformer.parent_atom.pos.x == pytest.approx(1.5)
+    assert conformer.parent_selection == "matching_altloc"
+    assert conformer.occupancy == pytest.approx(0.35)
+
+
+def test_labelled_donor_can_use_one_shared_blank_parent():
+    residue = _residue("LEU", [
+        _atom("CG", "C", (1.5, 0.0, 0.0), altloc="\0"),
+        _atom("CD1", "C", (3.0, 0.0, 0.0), altloc="B"),
+    ])
+    donor = next(atom for atom in residue if atom.name == "CD1")
+
+    resolution = donors.resolve_donor_conformers(
+        residue, donor, donors.get_definition("LEU", "CD1"), 0, "A")
+
+    assert resolution.issue is None
+    assert len(resolution.conformers) == 1
+    assert resolution.conformers[0].parent_altloc == ""
+    assert resolution.conformers[0].parent_selection == "shared_blank_parent"
+
+
+def test_blank_donor_expands_unique_alternate_parent_conformers():
+    residue = _residue("LEU", [
+        _atom("CG", "C", (0.0, 1.5, 0.0), occ=0.6, altloc="B"),
+        _atom("CG", "C", (1.5, 0.0, 0.0), occ=0.4, altloc="A"),
+        _atom("CD1", "C", (3.0, 0.0, 0.0), altloc="\0"),
+    ])
+    donor = next(atom for atom in residue if atom.name == "CD1")
+
+    resolution = donors.resolve_donor_conformers(
+        residue, donor, donors.get_definition("LEU", "CD1"), 0, "A")
+
+    assert resolution.issue is None
+    assert [item.parent_altloc for item in resolution.conformers] == ["A", "B"]
+    assert all(item.active_altloc in {"A", "B"}
+               for item in resolution.conformers)
+
+
+def test_incompatible_or_duplicate_parent_is_auditable_not_order_dependent():
+    incompatible = _residue("LEU", [
+        _atom("CG", "C", altloc="A"),
+        _atom("CD1", "C", altloc="B"),
+    ])
+    donor = next(atom for atom in incompatible if atom.name == "CD1")
+    resolution = donors.resolve_donor_conformers(
+        incompatible, donor, donors.get_definition("LEU", "CD1"), 0, "A")
+    assert resolution.conformers == ()
+    assert resolution.issue == "incompatible_parent_altloc:A"
+
+    duplicate = _residue("LEU", [
+        _atom("CG", "C", (0.0, 0.0, 0.0), altloc="B"),
+        _atom("CG", "C", (0.1, 0.0, 0.0), altloc="B"),
+        _atom("CD1", "C", altloc="B"),
+    ])
+    donor = next(atom for atom in duplicate if atom.name == "CD1")
+    resolution = donors.resolve_donor_conformers(
+        duplicate, donor, donors.get_definition("LEU", "CD1"), 0, "A")
+    assert resolution.conformers == ()
+    assert resolution.issue == "duplicate_parent_altloc:B"
 
 
 def test_vectorized_allowed_set_matches_scalar_reference():

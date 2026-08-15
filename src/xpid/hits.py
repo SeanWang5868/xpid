@@ -138,14 +138,21 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "ring_conformers.RingContext",
     donor_rings = aromatic_rings.get_aromatic_rings(
         x_cra.residue.name)
     for d_ring_atoms in donor_rings:
-        d_pi_atoms = [a for a in x_cra.residue if a.name in d_ring_atoms]
-        if len(d_pi_atoms) != len(d_ring_atoms):
-            continue
-        _, d_center, d_normal, _ = geometry.get_pi_info(d_pi_atoms)
-        pp_dist, pp_angle, _ = geometry.calculate_pi_pi_geometry(
-            rctx.pi_center_arr, rctx.pi_normal, d_center, d_normal)
-        if 3.0 <= pp_dist <= config.PI_PI_DIST_MAX and pp_angle >= config.PI_PI_ANGLE_TSHAPED_MIN:
-            is_pi_pi_tshaped = 1
+        donor_ring_variants = ring_conformers._atom_variants_for_names(
+            x_cra.residue, d_ring_atoms)
+        x_altloc = ring_conformers._altloc(x_atom)
+        for donor_ring_altloc, d_pi_atoms in donor_ring_variants:
+            if (x_altloc and donor_ring_altloc and
+                    x_altloc != donor_ring_altloc):
+                continue
+            _, d_center, d_normal, _ = geometry.get_pi_info(d_pi_atoms)
+            pp_dist, pp_angle, _ = geometry.calculate_pi_pi_geometry(
+                rctx.pi_center_arr, rctx.pi_normal, d_center, d_normal)
+            if (3.0 <= pp_dist <= config.PI_PI_DIST_MAX and
+                    pp_angle >= config.PI_PI_ANGLE_TSHAPED_MIN):
+                is_pi_pi_tshaped = 1
+                break
+        if is_pi_pi_tshaped:
             break
 
     hit = {

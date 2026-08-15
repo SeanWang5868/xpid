@@ -250,6 +250,9 @@ def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.Neighbor
     for mark in neighbors:
         cra = mark.to_cra(model)
         neighbor_atom = cra.atom
+        if not hbond_acceptors.altlocs_compatible(
+                x_atom.altloc, neighbor_atom.altloc):
+            continue
         neighbor_pos = ns.grid_cell.find_nearest_pbc_position(
             search_pos, neighbor_atom.pos, mark.image_idx)
         dist = neighbor_pos.dist(search_pos)
@@ -363,7 +366,8 @@ def _detect_residue(pdb_name, resolution, model, model_index, model_id,
         if x_atom.occ < 0.10: continue
         if max_b > 0 and x_atom.b_iso > max_b: continue
 
-        if pi_alt and x_atom.altloc and pi_alt != x_atom.altloc:
+        if not hbond_acceptors.altlocs_compatible(
+                pi_alt, ring_conformers._altloc(x_atom)):
             continue
 
         combined_occ = min(avg_pi_occ, x_atom.occ)
@@ -423,7 +427,7 @@ def _detect_residue(pdb_name, resolution, model, model_index, model_id,
                 x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
                 combined_occ, sym_op, include_p_slab, include_coordinates,
                 sasa_map, hits, report_xh_candidates,
-                donor_definition, diagnostics, symmetry_code,
+                donor_definition, diagnostics, symmetry_code, model_index,
             )
         else:
             # Rigid donor, or rotatable in --no-cone mode:
@@ -497,7 +501,8 @@ def _run_explicit_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_ma
                 x_cra.residue, x_atom, h_atom):
             continue
 
-        if h_atom.altloc and x_atom.altloc and h_atom.altloc != x_atom.altloc:
+        if not hbond_acceptors.altlocs_compatible(
+                x_atom.altloc, h_atom.altloc):
             continue
 
         h_combined_occ = min(combined_occ, h_atom.occ)
@@ -585,7 +590,8 @@ def _run_cone_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_mark, 
                     donor_definition: Optional[
                         rotatable_groups.RotatableGroupDefinition] = None,
                     diagnostics: Optional[Dict[str, Any]] = None,
-                    symmetry_code: str = "1_555"):
+                    symmetry_code: str = "1_555",
+                    model_index: int = 0):
     """Evaluate a chemically complete binary cone for a rotatable donor."""
     if donor_definition is None:
         donor_definition = rotatable_groups.get_rotatable_group(
@@ -593,16 +599,50 @@ def _run_cone_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_mark, 
     if donor_definition is None:
         return
 
-    parent_name = donor_definition.parent_atom_name
-    parent_atom = rotatable_groups.find_parent_atom(
-        x_res, donor_definition)
-    if not parent_atom:
+    resolution = rotatable_groups.resolve_donor_conformers(
+        x_res, x_atom, donor_definition,
+        model_index=model_index, chain_name=x_cra.chain.name)
+    if resolution.issue is not None:
+        parent_name = donor_definition.parent_atom_name
+        x_altloc = ring_conformers._altloc(x_atom) or "<blank>"
         if diagnostics is not None:
-            diagnostics.setdefault("cone_missing_parent_groups", set()).add(
+            diagnostic = (
                 f"{rctx.model_id}:{x_cra.chain.name}:"
                 f"{str(x_res.seqid).strip()}:{x_res_name}:"
-                f"{x_atom.name}:{parent_name}")
+                f"{x_atom.name}:{x_altloc}:{parent_name}:"
+                f"{resolution.issue}")
+            diagnostics.setdefault(
+                "cone_parent_resolution_issues", set()).add(diagnostic)
+            if resolution.issue == "missing_parent":
+                diagnostics.setdefault(
+                    "cone_missing_parent_groups", set()).add(
+                        f"{rctx.model_id}:{x_cra.chain.name}:"
+                        f"{str(x_res.seqid).strip()}:{x_res_name}:"
+                        f"{x_atom.name}:{parent_name}")
         return
+
+    for donor_conformer in resolution.conformers:
+        _run_cone_conformer(
+            rctx, x_cra, x_atom, x_mark, x_res, x_elem,
+            x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
+            combined_occ, sym_op, include_p_slab, include_coordinates,
+            sasa_map, hits, report_xh_candidates, donor_definition,
+            donor_conformer, symmetry_code)
+
+
+def _run_cone_conformer(
+        rctx: "ring_conformers.RingContext", x_cra, x_atom, x_mark, x_res,
+        x_elem, x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid,
+        proj_dist, combined_occ, sym_op, include_p_slab: bool,
+        include_coordinates: bool, sasa_map: Dict, hits,
+        report_xh_candidates: bool,
+        donor_definition: rotatable_groups.RotatableGroupDefinition,
+        donor_conformer: rotatable_groups.DonorConformer,
+        symmetry_code: str,
+        ) -> None:
+    """Evaluate one internally consistent X-parent alternate conformer."""
+    parent_name = donor_definition.parent_atom_name
+    parent_atom = donor_conformer.parent_atom
 
     # Resolve parent position (sym mates need transformed coords)
     if is_sym_mate:
@@ -627,21 +667,31 @@ def _run_cone_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_mark, 
             continue
         same_residue = (
             n_cra.chain.name == x_cra.chain.name and
-            n_cra.residue.seqid == x_res.seqid
+            n_cra.residue.seqid == x_res.seqid and
+            n_cra.residue.name == x_res.name
         )
         n_effective_pos = (
             rctx.ns.grid_cell.find_nearest_pbc_position(
                 cone_search_pos, n_cra.atom.pos, n_mark.image_idx))
         if same_residue:
+            if not hbond_acceptors.altlocs_compatible(
+                    donor_conformer.active_altloc,
+                    ring_conformers._altloc(n_cra.atom)):
+                continue
             if (n_cra.atom.name == x_atom.name and
+                    ring_conformers._altloc(n_cra.atom) ==
+                    donor_conformer.x_altloc and
                     n_effective_pos.dist(cone_search_pos) < 0.01):
                 continue
             if (n_cra.atom.name == parent_name and
+                    ring_conformers._altloc(n_cra.atom) ==
+                    donor_conformer.parent_altloc and
                     np.linalg.norm(
                         _pos_to_arr(n_effective_pos) - parent_pos_arr) < 0.01):
                 continue
-        if not hbond_acceptors.altlocs_compatible(
-                x_atom.altloc, n_cra.atom.altloc):
+        elif not hbond_acceptors.altlocs_compatible(
+                donor_conformer.x_altloc,
+                ring_conformers._altloc(n_cra.atom)):
             continue
         environment.append(cone.EnvironmentAtom(
             _pos_to_arr(n_effective_pos), n_cra.atom, n_cra.residue,
@@ -658,11 +708,14 @@ def _run_cone_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_mark, 
         include_p_slab=include_p_slab,
     )
     if evidence is not None:
+        conformer_occupancy = min(
+            combined_occ, donor_conformer.occupancy)
         selected_h_pos = evidence.conformer.hydrogen_positions[
             evidence.hydrogen_index]
         _hits._record_hit(hits, rctx, x_cra, x_atom, "virt", dist_x_pi,
                     dist_x_centroid, x_pos_arr, proj_dist, evidence.metrics,
-                    is_cone=True, combined_occ=combined_occ, sym_op=sym_op,
+                    is_cone=True, combined_occ=conformer_occupancy,
+                    sym_op=sym_op,
                     symmetry_code=symmetry_code,
                     h_atom=None, include_p_slab=include_p_slab,
                     include_candidate_metrics=report_xh_candidates,

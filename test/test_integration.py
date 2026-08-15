@@ -6,7 +6,7 @@ from pathlib import Path
 import gemmi
 import pytest
 from xpid import (
-    XPIDError, __version__, api, cli, core, config, detect,
+    XPIDError, __version__, api, cli, core, config, detect, detector,
     hydrogen_prep as prep,
     monomer_bonds, output, provenance, resolver,
 )
@@ -566,6 +566,174 @@ def test_duplicate_altloc_hits_are_collapsed_to_best_occupancy():
 
     assert len(hits) == 1
     assert hits[0]["dist_X_Pi"] == 3.0
+
+
+def _structure_with_altloc_leu(parent_order=("A", "B")):
+    st = _structure_with_phe_and_og(include_external_donor=False)
+    chain = st[0][0]
+    leu = gemmi.Residue()
+    leu.name = "LEU"
+    leu.seqid = _seqid(2)
+    parents = {
+        "A": _atom("CG", "C", (0.0, 1.53, 3.0),
+                   occ=0.65, altloc="A"),
+        "B": _atom("CG", "C", (1.53, 0.0, 3.0),
+                   occ=0.35, altloc="B"),
+    }
+    for altloc in parent_order:
+        leu.add_atom(parents[altloc])
+    leu.add_atom(_atom("CD1", "C", (0.0, 0.0, 3.0),
+                        occ=0.35, altloc="B"))
+    # Same-conformer, non-bonded atoms must remain available to the steric
+    # classifier; this one is deliberately too distant to block the cone.
+    leu.add_atom(_atom("C", "C", (3.8, 0.0, 3.0),
+                        occ=0.35, altloc="B"))
+    chain.add_residue(leu)
+    return st
+
+
+def test_cone_altloc_parent_and_environment_are_order_independent(monkeypatch):
+    original = core.cone.evaluate_binary
+    environments = []
+
+    def capture_environment(*args, **kwargs):
+        environments.append([
+            (item.atom.name, item.atom.altloc)
+            for item in args[5]
+            if item.residue.name == "LEU"
+        ])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(core.cone, "evaluate_binary", capture_environment)
+    first = core.detect_interactions_in_structure(
+        _structure_with_altloc_leu(("A", "B")), "test",
+        annotate_cooperativity=False)
+    second = core.detect_interactions_in_structure(
+        _structure_with_altloc_leu(("B", "A")), "test",
+        annotate_cooperativity=False)
+
+    assert len(first) == len(second) == 1
+    assert first[0]["X_altloc"] == second[0]["X_altloc"] == "B"
+    assert first[0]["combined_occupancy"] == pytest.approx(0.35)
+    assert first[0]["H_xyz_x"] == second[0]["H_xyz_x"]
+    assert first[0]["H_xyz_y"] == second[0]["H_xyz_y"]
+    assert first[0]["H_xyz_z"] == second[0]["H_xyz_z"]
+    assert len(environments) == 2
+    for environment in environments:
+        assert ("CG", "A") not in environment
+        assert ("CG", "B") not in environment
+        assert ("C", "B") in environment
+
+
+def test_incompatible_cone_parent_altloc_is_skipped_and_reported():
+    st = _structure_with_altloc_leu()
+    leu = st[0][0][1]
+    parent_b_index = next(
+        index for index, atom in enumerate(leu)
+        if atom.name == "CG" and atom.altloc == "B")
+    del leu[parent_b_index]
+    diagnostics = {}
+
+    hits = core.detect_interactions_in_structure(
+        st, "test", diagnostics=diagnostics,
+        annotate_cooperativity=False)
+
+    assert hits == []
+    assert diagnostics["cone_parent_resolution_issues"] == {
+        "1:A:2:LEU:CD1:B:CG:incompatible_parent_altloc:A"
+    }
+
+
+def test_altloc_cone_parent_uses_same_periodic_image_as_donor():
+    st = _structure_with_altloc_leu()
+    st.cell = gemmi.UnitCell(10, 10, 10, 90, 90, 90)
+    for atom in st[0][0][1]:
+        atom.pos.z = 7.0
+
+    assert core.detect_interactions_in_structure(
+        st.clone(), "test", sym_contacts=False,
+        annotate_cooperativity=False) == []
+
+    hits = core.detect_interactions_in_structure(
+        st, "test", sym_contacts=True,
+        annotate_cooperativity=False)
+
+    assert len(hits) == 1
+    assert hits[0]["X_altloc"] == "B"
+    assert hits[0]["dist_X_Pi"] == pytest.approx(3.0)
+    assert hits[0]["symmetry_code"] == "1_554"
+
+
+def test_blank_cone_donor_evaluates_each_parent_altloc_then_ranks_hit(
+        monkeypatch):
+    st = _structure_with_altloc_leu()
+    donor = next(atom for atom in st[0][0][1] if atom.name == "CD1")
+    donor.altloc = "\0"
+    donor.occ = 1.0
+    original = core.cone.evaluate_binary
+    parent_positions = []
+
+    def capture_parent(*args, **kwargs):
+        parent_positions.append(tuple(args[2]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(core.cone, "evaluate_binary", capture_parent)
+    hits = core.detect_interactions_in_structure(
+        st, "test", annotate_cooperativity=False)
+
+    assert len(parent_positions) == 2
+    assert set(parent_positions) == {
+        (0.0, 1.53, 3.0),
+        (1.53, 0.0, 3.0),
+    }
+    assert len(hits) == 1
+    # Existing representative ranking remains occupancy-first after both
+    # chemically valid parent conformers have been evaluated.
+    assert hits[0]["combined_occupancy"] == pytest.approx(0.65)
+
+
+def test_blank_donor_is_compatible_with_labelled_pi_conformer():
+    st = _structure_with_phe_and_og()
+    for atom in st[0][0][0]:
+        atom.altloc = "A"
+    ser = st[0][0][1]
+    ser.add_atom(_atom("CB", "C", (1.42, 0.0, 3.0), altloc="\0"))
+
+    hits = core.detect_interactions_in_structure(
+        st, "test", annotate_cooperativity=False)
+
+    assert len(hits) == 1
+    assert hits[0]["pi_altloc"] == "A"
+    assert hits[0]["X_altloc"] == ""
+
+
+def test_donor_blocking_ignores_incompatible_altloc_sulfur():
+    st = gemmi.Structure()
+    st.cell = gemmi.UnitCell(20, 20, 20, 90, 90, 90)
+    model = gemmi.Model("1")
+    chain = gemmi.Chain("A")
+    cys = gemmi.Residue()
+    cys.name = "CYS"
+    cys.seqid = _seqid(1)
+    cys.add_atom(_atom("SG", "S", (0.0, 0.0, 0.0), altloc="B"))
+    cys.add_atom(_atom("SG", "S", (2.0, 0.0, 0.0), altloc="A"))
+    chain.add_residue(cys)
+    model.add_chain(chain)
+    st.add_model(model)
+    ns = gemmi.NeighborSearch(model, st.cell, 3.0)
+    ns.populate(include_h=True)
+    sulfur_b = next(atom for atom in cys if atom.altloc == "B")
+
+    assert detector._is_donor_blocked(sulfur_b, model, ns) is False
+
+    partner = gemmi.Residue()
+    partner.name = "CYS"
+    partner.seqid = _seqid(2)
+    partner.add_atom(_atom("SG", "S", (0.0, 2.0, 0.0), altloc="B"))
+    model[0].add_residue(partner)
+    ns = gemmi.NeighborSearch(model, st.cell, 3.0)
+    ns.populate(include_h=True)
+    assert detector._is_donor_blocked(sulfur_b, model, ns) is True
 
 
 def test_p_model_uses_plane_distance_not_centroid_distance():

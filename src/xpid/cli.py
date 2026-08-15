@@ -178,6 +178,7 @@ def process_one_file(task: TaskPacket):
         },
         "incomplete_aromatic_rings": set(),
         "cone_missing_parent_groups": set(),
+        "cone_parent_resolution_issues": set(),
         "error": None,
     }
 
@@ -186,6 +187,8 @@ def process_one_file(task: TaskPacket):
             diagnostics.get("incomplete_aromatic_rings", set()))
         diagnostics["cone_missing_parent_groups"] = sorted(
             diagnostics.get("cone_missing_parent_groups", set()))
+        diagnostics["cone_parent_resolution_issues"] = sorted(
+            diagnostics.get("cone_parent_resolution_issues", set()))
         return diagnostics
 
     try:
@@ -618,6 +621,7 @@ def main():
                 preparation.get("protected_neighbor_residues", []))
             if (record.get("incomplete_aromatic_rings") or
                     record.get("cone_missing_parent_groups") or
+                    record.get("cone_parent_resolution_issues") or
                     preparation.get("missing_monomer_components") or
                     preparation.get("skipped_residues") or
                     preparation.get("protected_neighbor_residues")):

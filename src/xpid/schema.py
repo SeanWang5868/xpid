@@ -65,7 +65,7 @@ FIELDS: Tuple[Field, ...] = (
     Field("H_source", "str", "base", "", "experimental / added / cone_virtual"),
     Field("H_altloc", "str", "base", "", "Alternate-conformation label of explicit H"),
     Field("combined_occupancy", "float", "base", 1.0,
-          "Minimum occupancy across the ring, donor X and explicit H"),
+          "Minimum occupancy across ring, donor X, explicit H or Cone parent"),
     # -- Geometry (always present) ------------------------------------------
     Field("dist_X_Pi", "float", "base", None, "Perpendicular distance X → π plane (Å)"),
     Field("dist_X_centroid", "float", "base", None, "Distance X → ring centroid (Å)"),

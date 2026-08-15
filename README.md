@@ -187,7 +187,11 @@ sequence separation, and B-factors.
 Every run also writes `<output-name>_diagnostics.json`.  It records the input
 source and canonical structure ID, hydrogen-preparation status, missing monomer
 components, incomplete aromatic rings, Cone groups with a missing parent atom,
-and any per-structure failure.  If Gemmi identifies one specific residue whose
+ambiguous or altloc-incompatible Cone parents, and any per-structure failure.
+Cone parent selection is conformer-aware: a labelled donor uses the matching
+parent altloc or one shared blank parent, while unresolved or chemically
+incompatible parent assignments are skipped and audited rather than selected
+by atom order.  If Gemmi identifies one specific residue whose
 atom names or topology are incompatible with its monomer definition, Xpid
 marks hydrogen preparation as `partial`, retains that residue's experimental
 heavy atoms in the steric environment, but disables its donor capability.  A

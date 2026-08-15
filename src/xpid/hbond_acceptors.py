@@ -37,10 +37,18 @@ NON_ACCEPTOR_NITROGEN = {
 }
 
 
+def altlocs_compatible(left: Optional[str], right: Optional[str]) -> bool:
+    left = "" if left in (None, "", "\0") else left
+    right = "" if right in (None, "", "\0") else right
+    return not left or not right or left == right
+
+
 def _has_bonded_hydrogen(residue: gemmi.Residue, atom: gemmi.Atom) -> bool:
     """Use explicit local H positions as conservative protonation evidence."""
     for candidate in residue:
         if candidate.element.name.upper() not in {"H", "D"}:
+            continue
+        if not altlocs_compatible(atom.altloc, candidate.altloc):
             continue
         if atom.pos.dist(candidate.pos) <= 1.45:
             return True
@@ -78,9 +86,3 @@ def is_hbond_acceptor(residue: gemmi.Residue, atom: gemmi.Atom) -> bool:
     if element in {"O", "S"}:
         return not _has_bonded_hydrogen(residue, atom)
     return False
-
-
-def altlocs_compatible(left: Optional[str], right: Optional[str]) -> bool:
-    left = "" if left in (None, "", "\0") else left
-    right = "" if right in (None, "", "\0") else right
-    return not left or not right or left == right
