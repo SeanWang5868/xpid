@@ -7,7 +7,7 @@ import gemmi
 import pytest
 from xpid import (
     XPIDError, __version__, api, cli, core, config, detect, detector,
-    hydrogen_prep as prep,
+    hydrogen_prep as prep, hits as hit_records,
     monomer_bonds, output, provenance, resolver,
 )
 
@@ -1279,6 +1279,43 @@ def test_same_residue_symmetry_copy_is_a_valid_contact(monkeypatch):
     assert hits[0]["sym_op"] == 0  # P1 translation has operation index 0.
     assert hits[0]["symmetry_code"] == "1_554"
     assert hits[0]["H_xyz_z"] == -1.0
+
+
+def test_mark_symmetry_code_is_constrained_to_mark_image():
+    st = gemmi.Structure()
+    st.cell = gemmi.UnitCell(10, 11, 12, 90, 90, 90)
+    st.spacegroup_hm = "P 21 21 21"
+    st.setup_cell_images()
+    reference = gemmi.Position(
+        9.020404992750784, 9.584406039714066, 6.669958593291997)
+    base = gemmi.Position(
+        4.772794843781152, 2.1559644858522775, 1.5115823428390733)
+    mark = type("Mark", (), {"image_idx": 3})()
+
+    position, is_symmetry, code = detector._nearest_mark_position(
+        reference, mark, st.cell, base)
+    exact = st.cell.find_nearest_pbc_image(reference, base, 3)
+    unconstrained = st.cell.find_nearest_image(
+        reference, base, gemmi.Asu.Any)
+
+    assert code == exact.symmetry_code() == "4_655"
+    assert code != unconstrained.symmetry_code()
+    assert is_symmetry
+    assert position.dist(reference) == pytest.approx(exact.dist(), abs=1e-9)
+
+
+def test_hit_dedup_uses_full_symmetry_code_not_internal_image_index():
+    base = {
+        "pdb": "test", "model": "1", "_pi_ring_key": "ring1",
+        "pi_chain": "A", "pi_res": "PHE", "pi_id": "1",
+        "X_chain": "A", "X_res": "PRO", "X_id": "2",
+        "X_atom": "CD", "H_atom": "HD2", "symmetry_code": "1_555",
+        "_combined_occ": 1.0, "is_hudson": 1, "is_plevin": 0,
+        "dist_X_Pi": 3.8, "proj_dist": 1.0,
+    }
+    hits = [dict(base, sym_op=0), dict(base, sym_op=2)]
+    deduplicated = hit_records._deduplicate_hits(hits)
+    assert len(deduplicated) == 1
 
 
 def test_cone_missing_parent_is_reported():

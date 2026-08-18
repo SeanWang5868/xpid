@@ -32,7 +32,7 @@ def _dedup_key(hit: Dict[str, Any]) -> tuple:
         hit.get("pdb"), hit.get("model"), hit.get("_pi_ring_key"),
         hit.get("pi_chain"), hit.get("pi_res"), hit.get("pi_id"),
         hit.get("X_chain"), hit.get("X_res"), hit.get("X_id"),
-        hit.get("X_atom"), hit.get("H_atom"), hit.get("sym_op"),
+        hit.get("X_atom"), hit.get("H_atom"),
         hit.get("symmetry_code", "1_555"),
     )
 

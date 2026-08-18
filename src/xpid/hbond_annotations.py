@@ -29,11 +29,9 @@ def _nearest_mark_position(
         base_position: gemmi.Position) -> Tuple[gemmi.Position, str]:
     position = ns.grid_cell.find_nearest_pbc_position(
         reference, base_position, mark.image_idx)
-    nearest = ns.grid_cell.find_nearest_image(
-        reference, base_position, gemmi.Asu.Any)
-    is_symmetry_mate = (
-        mark.image_idx != 0 or position.dist(base_position) > 1e-5)
-    code = nearest.symmetry_code() if is_symmetry_mate else "1_555"
+    nearest = ns.grid_cell.find_nearest_pbc_image(
+        reference, base_position, mark.image_idx)
+    code = nearest.symmetry_code()
     return position, code
 # Scoring
 # ---------------------------------------------------------------------------

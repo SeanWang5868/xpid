@@ -42,17 +42,19 @@ def _nearest_mark_position(
         ) -> tuple[gemmi.Position, bool, str]:
     """Resolve a NeighborSearch mark into the nearest crystallographic copy.
 
-    ``Mark.pos`` can be a grid-wrapped coordinate and ``image_idx`` does not
-    encode the lattice translation (P1 translations still use image index 0),
-    so the atom's original ASU position is required explicitly.
+    ``Mark.pos`` can be a grid-wrapped coordinate and ``image_idx`` identifies
+    only the crystallographic operation, not the lattice translation (P1
+    translations still use image index 0).  The nearest-image query must be
+    constrained to that same operation; an unconstrained query can return a
+    different, closer image and attach the wrong IUCr symmetry code to the
+    coordinates used for the interaction.
     """
     position = cell.find_nearest_pbc_position(
         reference, base_position, mark.image_idx)
-    nearest = cell.find_nearest_image(
-        reference, base_position, gemmi.Asu.Any)
-    is_symmetry_mate = (
-        mark.image_idx != 0 or position.dist(base_position) > 1e-5)
-    symmetry_code = nearest.symmetry_code() if is_symmetry_mate else "1_555"
+    nearest = cell.find_nearest_pbc_image(
+        reference, base_position, mark.image_idx)
+    is_symmetry_mate = not nearest.same_asu()
+    symmetry_code = nearest.symmetry_code()
     return position, is_symmetry_mate, symmetry_code
 
 def _residue_match_key(chain_name: str, residue: gemmi.Residue) -> tuple:
