@@ -14,7 +14,7 @@ pip install xpid
 
 ## Quick Start
 
-Scan one structure:
+Scan one protein structure:
 
 ```bash
 xpid 1abc.cif --file-type csv
