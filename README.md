@@ -53,17 +53,6 @@ when legacy empty-on-error behavior is explicitly desired.
 
 Output column names currently remain ASCII for compatibility with existing scripts.
 
-## Demo Notebook
-
-`xpid_demo.ipynb` is a complete guided tutorial. It:
-
-1. lists the required Python packages,
-2. downloads PDB entry `5FJJ` beside the notebook,
-3. verifies which CCP4 monomer library Xpid is using,
-4. runs detection,
-5. summarizes XH–π interactions with tables and plots,
-6. demonstrates filtering and command-line usage.
-
 ## Geometric Criteria
 
 By default, Xpid reports the Hudson/Plevin result set. A row is reported when
