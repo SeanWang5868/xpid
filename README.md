@@ -1,8 +1,9 @@
 # Xpid
 
 [![PyPI version](https://img.shields.io/pypi/v/xpid)](https://pypi.org/project/xpid/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22875176.svg)](https://doi.org/10.5281/zenodo.22875176)
 [![Python 3.9+](https://img.shields.io/pypi/pyversions/xpid)](https://pypi.org/project/xpid/)
-[![License](https://img.shields.io/github/license/SeanWang5868/xpid2)](https://github.com/SeanWang5868/xpid2/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/SeanWang5868/xpid)](https://github.com/SeanWang5868/xpid/blob/main/LICENSE)
 
 **Xpid** detects XH–π interactions in protein structures from PDB/mmCIF files using [Gemmi](https://gemmi.readthedocs.io/).
 

@@ -1,0 +1,54 @@
+cff-version: 1.2.0
+type: software
+message: "If you use Xpid in your research, please cite the software using the metadata below."
+title: "Xpid: A Detector for XH–π Interactions in Macromolecular Structures"
+authors:
+  - given-names: "Shuai"
+    family-names: "Wang"
+    affiliation: "York Structural Biology Laboratory, Department of Chemistry, University of York, York YO10 5DD, UK"
+  - given-names: "Lucy C."
+    family-names: "Schofield"
+    affiliation: "York Structural Biology Laboratory, Department of Chemistry, University of York, York YO10 5DD, UK"
+  - given-names: "Jordan S."
+    family-names: "Dialpuri"
+    affiliation: "MRC Laboratory of Molecular Biology, Francis Crick Avenue, Cambridge CB2 0QH, UK"
+  - given-names: "Phuong Thao"
+    family-names: "Pham"
+    affiliation: "Department of Biology, University of Sheffield, Sheffield, UK"
+  - given-names: "Lou"
+    family-names: "Holland"
+    affiliation: "York Structural Biology Laboratory, Department of Chemistry, University of York, York YO10 5DD, UK"
+  - given-names: "William"
+    family-names: "Cook"
+    affiliation: "York Structural Biology Laboratory, Department of Chemistry, University of York, York YO10 5DD, UK"
+  - given-names: "Michael J."
+    family-names: "Plevin"
+    affiliation: "York Structural Biology Laboratory, Department of Chemistry, University of York; Department of Biology, University of York; York Biomedical Research Institute, University of York, York, UK"
+  - given-names: "Jon"
+    family-names: "Agirre"
+    affiliation: "York Structural Biology Laboratory, Department of Chemistry, University of York, York YO10 5DD, UK"
+version: "2.1.10"
+date-released: "2026-09-21"
+doi: "10.5281/zenodo.22875177"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.22875176"
+    description: "Concept DOI representing all versions of Xpid."
+  - type: doi
+    value: "10.5281/zenodo.22875177"
+    description: "Version DOI for Xpid v2.1.10."
+repository-code: "https://github.com/SeanWang5868/xpid"
+url: "https://pypi.org/project/xpid/"
+license: MIT
+abstract: >-
+  Xpid is a chemically informed software package for detecting XH–π
+  interactions in macromolecular structures. It combines monomer-library-based
+  chemical perception and hydrogen placement with conformational sampling of
+  supported rotatable X–H groups, steric filtering, crystallographic symmetry
+  contacts, and the Hudson and Plevin geometric criteria.
+keywords:
+  - "XH–π interaction"
+  - "structural biology"
+  - "macromolecular crystallography"
+  - "protein structure"
+  - "Gemmi"
