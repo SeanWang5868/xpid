@@ -129,8 +129,6 @@ If you use Xpid, please cite the software version used in your analysis:
 > Macromolecular Structures* (Version 2.1.10) [Computer software]. Zenodo.
 > https://doi.org/10.5281/zenodo.22875177
 
-Citation metadata are also available in [`CITATION.cff`](CITATION.cff).
-
 ## License and contact
 
 Xpid is distributed under the [MIT License](LICENSE).
