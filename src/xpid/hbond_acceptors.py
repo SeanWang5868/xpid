@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Optional
 
 import gemmi
+from . import config, monomer_bonds
 
 
 BACKBONE_ACCEPTORS = {"O", "OXT"}
@@ -43,19 +44,32 @@ def altlocs_compatible(left: Optional[str], right: Optional[str]) -> bool:
     return not left or not right or left == right
 
 
-def _has_bonded_hydrogen(residue: gemmi.Residue, atom: gemmi.Atom) -> bool:
+def _has_bonded_hydrogen(residue: gemmi.Residue, atom: gemmi.Atom,
+                         altloc: Optional[str] = None) -> bool:
     """Use explicit local H positions as conservative protonation evidence."""
+    bonded = monomer_bonds.get_bonded_hydrogen_names(residue.name, atom.name)
+    canonical = None if bonded is None else {
+        monomer_bonds.canonical_hydrogen_name(name) for name in bonded}
+    cutoff = config.COVALENT_XH_MAX.get(atom.element.name.upper(), 1.20)
     for candidate in residue:
         if candidate.element.name.upper() not in {"H", "D"}:
             continue
         if not altlocs_compatible(atom.altloc, candidate.altloc):
             continue
-        if atom.pos.dist(candidate.pos) <= 1.45:
+        if not altlocs_compatible(altloc, candidate.altloc):
+            continue
+        if candidate.occ < config.MIN_ATOM_OCCUPANCY:
+            continue
+        if canonical is not None and monomer_bonds.canonical_hydrogen_name(
+                candidate.name) not in canonical:
+            continue
+        if config.MIN_COVALENT_XH < atom.pos.dist(candidate.pos) <= cutoff:
             return True
     return False
 
 
-def is_hbond_acceptor(residue: gemmi.Residue, atom: gemmi.Atom) -> bool:
+def is_hbond_acceptor(residue: gemmi.Residue, atom: gemmi.Atom,
+                      altloc: Optional[str] = None) -> bool:
     """Return whether *atom* is a defensible conventional H-bond acceptor.
 
     This deliberately favours false negatives over allowing chemically
@@ -70,12 +84,12 @@ def is_hbond_acceptor(residue: gemmi.Residue, atom: gemmi.Atom) -> bool:
     if (res_name, name) in HYDROXYL_ACCEPTORS:
         return True
     if name in SIDECHAIN_ACCEPTORS.get(res_name, set()):
-        return not _has_bonded_hydrogen(residue, atom)
+        return not _has_bonded_hydrogen(residue, atom, altloc)
     if (res_name, name) in NON_ACCEPTOR_NITROGEN:
         return False
 
     if res_name == "HIS" and name in {"ND1", "NE2"}:
-        return not _has_bonded_hydrogen(residue, atom)
+        return not _has_bonded_hydrogen(residue, atom, altloc)
 
     if residue.is_water() and element == "O":
         return True
@@ -84,5 +98,5 @@ def is_hbond_acceptor(residue: gemmi.Residue, atom: gemmi.Atom) -> bool:
     # Unknown nitrogens require valence-aware monomer typing and are therefore
     # not allowed to impose a deterministic cone constraint.
     if element in {"O", "S"}:
-        return not _has_bonded_hydrogen(residue, atom)
+        return not _has_bonded_hydrogen(residue, atom, altloc)
     return False

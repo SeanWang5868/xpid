@@ -85,7 +85,8 @@ Important defaults:
 - Lys/Arg cationic donors are excluded because Xpid does not report cation–π
   interactions.
 - Water donors and crystallographic symmetry contacts are excluded unless
-  explicitly requested.
+  explicitly requested. Water remains in the environment for steric filtering,
+  conventional hydrogen-bond context and SASA.
 - Xpid is a geometric detector; it does not calculate interaction energies.
 
 When a component dictionary is available, only complete five- or six-membered
@@ -98,6 +99,18 @@ The default merged output is `xpid_results.json`; CSV and Parquet are selected
 with `--file-type`. Each reported row identifies the aromatic ring, donor X and
 hydrogen, and includes the main geometry together with `is_hudson` and
 `is_plevin` labels.
+
+`H_source` records `input_model` (input H/D coordinates), `added` (hydrogens
+generated during preparation), `adjusted` (input H/D moved during preparation)
+or `cone_virtual`. Input coordinates alone do not establish that a hydrogen
+was experimentally observed. Virtual H inherit the active parent/X conformer.
+Cone requires a terminal, covalently compatible group with available X–H
+valence; declared cross-links and coordination are retained during this check.
+Atoms below 0.10 occupancy are excluded from donor-H, Cone-parent and H-bond
+environment checks. H-bond context also respects `--min-occ`, `--max-b` and the
+detected alternate state, and identifies the acceptor's crystallographic image.
+Cooperativity is computed separately for each ring and ring alternate state,
+independently of coordinate export; an unknown face remains unassigned.
 
 Useful optional output includes:
 
@@ -126,8 +139,11 @@ for hit in detect("model.cif"):
 If you use Xpid, please cite the software version used in your analysis:
 
 > Wang, S. *et al.* (2026). *Xpid: A Detector for XH–π Interactions in
-> Macromolecular Structures* (Version 2.1.10) [Computer software]. Zenodo.
-> https://doi.org/10.5281/zenodo.22875177
+> Macromolecular Structures* (Version 2.1.11) [Computer software]. Zenodo.
+> https://doi.org/10.5281/zenodo.22875176
+
+This concept DOI represents all versions; use the version-specific DOI when
+one is available for the release being cited.
 
 ## License and contact
 

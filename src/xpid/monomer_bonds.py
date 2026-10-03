@@ -10,10 +10,44 @@ from . import monlib
 
 logger = logging.getLogger("xpid.monomer_bonds")
 _BONDED_HYDROGEN_CACHE: Dict[tuple, Optional[Set[str]]] = {}
+_BONDED_HEAVY_CACHE: Dict[tuple, Optional[Set[str]]] = {}
 
 
 def clear_cache() -> None:
     _BONDED_HYDROGEN_CACHE.clear()
+    _BONDED_HEAVY_CACHE.clear()
+
+
+def get_bonded_heavy_atom_names(res_name: str, atom_name: str) -> Optional[Set[str]]:
+    """Dictionary heavy neighbours, including modified component chemistry."""
+    path = monlib.find_monomer_cif(res_name.upper())
+    key = (res_name.upper(), atom_name.upper(), str(path) if path else None)
+    if key in _BONDED_HEAVY_CACHE:
+        return _BONDED_HEAVY_CACHE[key]
+    neighbours = None
+    if path:
+        try:
+            doc = gemmi.cif.read_file(str(path))
+            block = doc.find_block(f"comp_{key[0]}")
+            if block is None and len(doc) == 1:
+                block = doc[0]
+            if block is not None:
+                elements = {
+                    name.upper(): element.upper() for name, element in block.find([
+                        "_chem_comp_atom.atom_id", "_chem_comp_atom.type_symbol"])}
+                if key[1] in elements:
+                    neighbours = set()
+                    for left, right in block.find([
+                            "_chem_comp_bond.atom_id_1", "_chem_comp_bond.atom_id_2"]):
+                        left, right = left.upper(), right.upper()
+                        other = right if left == key[1] else left if right == key[1] else None
+                        if other and elements.get(other) not in {"H", "D", None}:
+                            neighbours.add(other)
+        except Exception as exc:
+            logger.warning("Failed to parse heavy bonds for %s/%s: %s",
+                           res_name, atom_name, exc)
+    _BONDED_HEAVY_CACHE[key] = neighbours
+    return neighbours
 
 
 def canonical_hydrogen_name(atom_name: str) -> str:
@@ -44,7 +78,7 @@ def get_bonded_hydrogen_names(res_name: str,
     try:
         doc = gemmi.cif.read_file(str(cif_path))
         block = doc.find_block(f"comp_{res_upper}")
-        if block is None and len(doc.blocks) == 1:
+        if block is None and len(doc) == 1:
             block = doc[0]
         if block is None:
             _BONDED_HYDROGEN_CACHE[cache_key] = None

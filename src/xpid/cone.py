@@ -10,6 +10,7 @@ import numpy as np
 from . import hbond_acceptors
 from . import rotatable_groups
 from . import xhpi_criteria
+from . import config
 
 
 VDW_RADII = {
@@ -23,7 +24,7 @@ STRONG_HBOND_HA_MAX = 2.50
 STRONG_HBOND_DHA_MIN = 140.0
 HBOND_CONTACT_HA_MAX = 2.80
 HBOND_CONTACT_DHA_MIN = 120.0
-ACCEPTOR_MIN_OCCUPANCY = 0.20
+ACCEPTOR_MIN_OCCUPANCY = config.MIN_ATOM_OCCUPANCY
 
 
 @dataclass(frozen=True)
@@ -152,6 +153,8 @@ def _hydrogen_state(x_pos: np.ndarray, h_pos: np.ndarray,
     """Return (sterically_valid, has_strong_hbond)."""
     has_strong_hbond = False
     for env in environment:
+        if _environment_properties(env)[2] < config.MIN_ATOM_OCCUPANCY:
+            continue
         distance = float(np.linalg.norm(env.position - h_pos))
         hbond_contact, strong_hbond = _hbond_geometry(
             x_pos, h_pos, env)
@@ -208,6 +211,8 @@ def _classify_conformer_arrays(
         [env.position for env in environment], dtype=float)
     properties = [_environment_properties(env) for env in environment]
     env_radii = np.asarray([item[0] for item in properties])
+    occupied_mask = np.asarray([
+        item[2] >= config.MIN_ATOM_OCCUPANCY for item in properties], dtype=bool)
     acceptor_mask = np.asarray([
         item[1] and item[2] >= ACCEPTOR_MIN_OCCUPANCY
         for item in properties
@@ -243,6 +248,7 @@ def _classify_conformer_arrays(
     clash_thresholds = (
         CLASH_SCALE * (VDW_RADII["H"] + env_radii))
     clashes = (
+        occupied_mask[None, None, :] &
         ~hbond_contacts &
         (
             (distances < ABSOLUTE_MIN_HA) |

@@ -237,14 +237,15 @@ def test_cooperativity_dedup_same_donor():
         assert hit["coop_total_donors"] == 1
 
 
-def test_cooperativity_unknown_face_defaults_to_positive():
+def test_cooperativity_unknown_face_is_not_assigned_a_face():
     hits = [
         {"pdb": "test", "model": "1", "pi_chain": "A", "pi_res": "PHE", "pi_id": "1",
          "X_chain": "A", "X_res": "SER", "X_id": "2", "X_atom": "OG", "sym_op": 0, "X_side_of_pi": 0},
     ]
     cooperativity.annotate_cooperativity(hits)
-    assert hits[0]["coop_same_face_donors"] == 1
-    assert hits[0]["coop_opp_face_donors"] == 0
+    assert hits[0]["coop_same_face_donors"] is None
+    assert hits[0]["coop_opp_face_donors"] is None
+    assert hits[0]["coop_total_donors"] == 1
     assert hits[0]["coop_bi_face"] == 0
 
 
@@ -298,7 +299,7 @@ def test_hbond_with_nearby_carbonyl():
     ala = gemmi.Residue()
     ala.name = "ALA"
     ala.seqid = _seqid(3)
-    ala.add_atom(_atom("O", "O", (0.0, 0, 1.0)))  # 2.0 Å from HG
+    ala.add_atom(_atom("O", "O", (0.0, 0, 0.5)))  # 1.5 Å from HG
     chain.add_residue(ala)
 
     model.add_chain(chain)

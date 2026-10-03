@@ -19,6 +19,8 @@ def _ring_key(hit: Dict[str, Any]) -> Tuple:
         hit.get("pi_chain", ""),
         hit.get("pi_res", ""),
         hit.get("pi_id", ""),
+        hit.get("pi_ring_id", ""),
+        hit.get("pi_altloc", ""),
     )
 
 
@@ -53,9 +55,10 @@ def annotate_cooperativity(
     Appends the following columns to each hit:
 
     ``coop_same_face_donors``
-        Number of distinct donors on the same face (including self).
+        Number of distinct donors on the same face (including self), or None
+        when the hit's face is unknown.
     ``coop_opp_face_donors``
-        Number of distinct donors on the opposite face.
+        Number of distinct donors on the opposite face, or None for an unknown face.
     ``coop_total_donors``
         Total distinct donors interacting with this π-ring.
     ``coop_bi_face``
@@ -83,8 +86,7 @@ def annotate_cooperativity(
             elif f < 0:
                 negative_donors.add(dkey)
             else:
-                # Unknown face: count in positive as a conservative default
-                positive_donors.add(dkey)
+                unknown_donors.add(dkey)
 
         total = len(positive_donors | negative_donors | unknown_donors)
         pos_count = len(positive_donors)
@@ -110,8 +112,8 @@ def annotate_cooperativity(
             same = stats.get("neg_count", 1)
             opp = stats.get("pos_count", 0)
         else:
-            same = stats.get("pos_count", 1)
-            opp = stats.get("neg_count", 0)
+            same = None
+            opp = None
 
         hit["coop_same_face_donors"] = same
         hit["coop_opp_face_donors"] = opp

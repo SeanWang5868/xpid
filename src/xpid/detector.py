@@ -24,6 +24,7 @@ from . import xhpi_criteria
 from . import hits as _hits
 from . import ss
 from . import schema
+from . import covalent_state
 
 logger = logging.getLogger("xpid.core")
 
@@ -142,10 +143,6 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
     results = []
     if not structure or len(structure) == 0: return []
 
-    if not include_water:
-        structure.remove_waters()
-    structure.remove_empty_chains()
-
     models_with_ids = []
     if model_mode == 'all':
         for i, m in enumerate(structure):
@@ -183,6 +180,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
         ns = gemmi.NeighborSearch(model, structure.cell, config.DIST_SEARCH_LIMIT)
         ns.populate(include_h=True)
         pair_keys = _resolve_residue_pair_keys(model, residue_pair)
+        connections = covalent_state.connection_index(structure, model)
 
         for chain in model:
             for residue in chain:
@@ -216,6 +214,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                             sym_contacts=sym_contacts, max_b=max_b,
                             excluded_donor_residues=excluded_donor_residues,
                             diagnostics=diagnostics,
+                            include_water=include_water, connections=connections,
                         ))
     hits = _hits._deduplicate_hits(results, prefer_directional=not report_xh_candidates)
     if annotate_cooperativity:
@@ -230,9 +229,11 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
         hbond_ns = gemmi.NeighborSearch(model, structure.cell, 5.0)
         hbond_ns.populate(include_h=False)
         hbond_annotations.annotate_explicit_hbond_context(
-            model_hits, structure, model_index=model_index, ns=hbond_ns)
+            model_hits, structure, model_index=model_index, ns=hbond_ns,
+            min_occ=min_occ, max_b=max_b)
         hbond_annotations.annotate_cone_hbond_context(
-            model_hits, structure, model_index=model_index, ns=hbond_ns)
+            model_hits, structure, model_index=model_index, ns=hbond_ns,
+            min_occ=min_occ, max_b=max_b)
     for hit in hits:
         unexpected_fields = schema.validate_hit(hit)
         if unexpected_fields:
@@ -242,7 +243,8 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
     return hits
 
 def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.NeighborSearch,
-                      x_pos: Optional[gemmi.Position] = None) -> bool:
+                      x_pos: Optional[gemmi.Position] = None,
+                      active_altloc: Optional[str] = None) -> bool:
     radius = 2.6
     search_pos = x_pos if x_pos is not None else x_atom.pos
     neighbors = ns.find_atoms(search_pos, radius=radius)
@@ -252,8 +254,11 @@ def _is_donor_blocked(x_atom: gemmi.Atom, model: gemmi.Model, ns: gemmi.Neighbor
     for mark in neighbors:
         cra = mark.to_cra(model)
         neighbor_atom = cra.atom
+        if neighbor_atom.occ < config.MIN_ATOM_OCCUPANCY:
+            continue
         if not hbond_acceptors.altlocs_compatible(
-                x_atom.altloc, neighbor_atom.altloc):
+                x_atom.altloc if active_altloc is None else active_altloc,
+                neighbor_atom.altloc):
             continue
         neighbor_pos = ns.grid_cell.find_nearest_pbc_position(
             search_pos, neighbor_atom.pos, mark.image_idx)
@@ -282,7 +287,9 @@ def _detect_residue(pdb_name, resolution, model, model_index, model_id,
                     max_b: float = 0.0,
                     excluded_donor_residues: Optional[
                         Set[tuple[int, str, str, str]]] = None,
-                    diagnostics: Optional[Dict[str, Any]] = None):
+                    diagnostics: Optional[Dict[str, Any]] = None,
+                    include_water: bool = False,
+                    connections: Optional[Dict] = None):
     hits = []
 
     max_planar_dev = geometry.calculate_planarity_deviation(pi_atoms)
@@ -291,7 +298,7 @@ def _detect_residue(pdb_name, resolution, model, model_index, model_id,
 
     pi_occs = [atom.occ for atom in pi_atoms]
     avg_pi_occ = sum(pi_occs) / len(pi_occs)
-    if avg_pi_occ < 0.10:
+    if avg_pi_occ < config.MIN_ATOM_OCCUPANCY:
         return []
     if max_b > 0 and any(atom.b_iso > max_b for atom in pi_atoms):
         return []
@@ -306,6 +313,7 @@ def _detect_residue(pdb_name, resolution, model, model_index, model_id,
         pi_alt=pi_alt, mode=mode, ring_size=ring_size, min_occ=min_occ,
         avg_pi_occ=avg_pi_occ, p_radius=p_radius,
         p_slab_half_thickness=config.P_SLAB_HALF_THICKNESS,
+        connections=connections or {}, max_b=max_b,
     )
 
     x_candidates = ns.find_atoms(pi_center, alt=pi_alt or "\0", radius=config.DIST_SEARCH_LIMIT)
@@ -315,6 +323,8 @@ def _detect_residue(pdb_name, resolution, model, model_index, model_id,
         x_atom = x_cra.atom
         x_res = x_cra.residue
         x_res_name = x_res.name
+        if not include_water and x_res.is_water():
+            continue
         x_elem = x_atom.element.name.upper()
         if x_elem not in config.TARGET_ELEMENTS_X:
             continue
@@ -357,15 +367,11 @@ def _detect_residue(pdb_name, resolution, model, model_index, model_id,
             x_res_name, x_atom.name)
         is_rotatable_donor = donor_definition is not None
 
-        if is_sym_mate:
-            if _is_donor_blocked(
-                    x_atom, model, ns, x_pos=x_effective_pos):
-                continue
-        else:
-            if _is_donor_blocked(x_atom, model, ns):
+        if not (is_rotatable_donor and cone_mode == "auto"):
+            if _is_donor_blocked(x_atom, model, ns, x_pos=x_effective_pos):
                 continue
 
-        if x_atom.occ < 0.10: continue
+        if x_atom.occ < config.MIN_ATOM_OCCUPANCY: continue
         if max_b > 0 and x_atom.b_iso > max_b: continue
 
         if not hbond_acceptors.altlocs_compatible(
@@ -420,10 +426,8 @@ def _detect_residue(pdb_name, resolution, model, model_index, model_id,
             if report_xh_candidates:
                 continue
 
-            # Rotatable donor in auto mode: skip explicit-H track entirely.
-            # Crystal-structure hydrogens on rotatable groups are riding
-            # hydrogens with no experimental support at typical resolutions.
-            # Cone rescue scans the full rotational space.
+            # Auto mode deliberately tests the allowed rotational space,
+            # independently of any input or prepared H direction.
             _run_cone_track(
                 rctx, x_cra, x_atom, x_mark, x_res, x_res_name, x_elem,
                 x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
@@ -472,6 +476,12 @@ def _run_explicit_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_ma
         h_atom = h_cra.atom
 
         if h_atom.element.name.upper() not in {'H', 'D'}:
+            continue
+        if h_atom.occ < config.MIN_ATOM_OCCUPANCY:
+            continue
+        if rctx.max_b > 0 and h_atom.b_iso > rctx.max_b:
+            continue
+        if not hbond_acceptors.altlocs_compatible(rctx.pi_alt, h_atom.altloc):
             continue
 
         if (h_cra.chain.name != x_cra.chain.name or
@@ -624,6 +634,28 @@ def _run_cone_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_mark, 
         return
 
     for donor_conformer in resolution.conformers:
+        if not hbond_acceptors.altlocs_compatible(
+                rctx.pi_alt, donor_conformer.active_altloc):
+            continue
+        if donor_conformer.occupancy < config.MIN_ATOM_OCCUPANCY:
+            continue
+        if min(combined_occ, donor_conformer.occupancy) < rctx.min_occ:
+            continue
+        if rctx.max_b > 0 and donor_conformer.parent_atom.b_iso > rctx.max_b:
+            continue
+        if _is_donor_blocked(
+                x_atom, rctx.model, rctx.ns,
+                active_altloc=donor_conformer.active_altloc):
+            continue
+        if not covalent_state.allows_cone(
+                x_res, x_cra.chain.name, donor_conformer, donor_definition,
+                rctx.connections, rctx.ns, rctx.model):
+            if diagnostics is not None:
+                diagnostics.setdefault("cone_covalent_state_exclusions", set()).add(
+                    f"{rctx.model_id}:{x_cra.chain.name}:"
+                    f"{str(x_res.seqid).strip()}:{x_res_name}:{x_atom.name}:"
+                    f"{donor_conformer.active_altloc or '<blank>'}")
+            continue
         _run_cone_conformer(
             rctx, x_cra, x_atom, x_mark, x_res, x_elem,
             x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
@@ -667,6 +699,11 @@ def _run_cone_conformer(
         n_elem = n_cra.atom.element.name.upper()
         if n_elem in ('H', 'D', ''):
             continue
+        if n_cra.atom.occ < config.MIN_ATOM_OCCUPANCY:
+            continue
+        if not hbond_acceptors.altlocs_compatible(
+                rctx.pi_alt, n_cra.atom.altloc):
+            continue
         same_residue = (
             n_cra.chain.name == x_cra.chain.name and
             n_cra.residue.seqid == x_res.seqid and
@@ -692,7 +729,7 @@ def _run_cone_conformer(
                         _pos_to_arr(n_effective_pos) - parent_pos_arr) < 0.01):
                 continue
         elif not hbond_acceptors.altlocs_compatible(
-                donor_conformer.x_altloc,
+                donor_conformer.active_altloc,
                 ring_conformers._altloc(n_cra.atom)):
             continue
         environment.append(cone.EnvironmentAtom(
@@ -700,7 +737,10 @@ def _run_cone_conformer(
             n_cra.chain.name, n_mark.image_idx,
             cone.VDW_RADII.get(n_elem, cone.DEFAULT_VDW_RADIUS),
             hbond_acceptors.is_hbond_acceptor(
-                n_cra.residue, n_cra.atom),
+                n_cra.residue, n_cra.atom,
+                altloc=donor_conformer.active_altloc or rctx.pi_alt)
+            and min(combined_occ, donor_conformer.occupancy, n_cra.atom.occ) >= rctx.min_occ
+            and (rctx.max_b <= 0 or n_cra.atom.b_iso <= rctx.max_b),
             n_cra.atom.occ,
         ))
 
@@ -724,4 +764,5 @@ def _run_cone_conformer(
                     include_coordinates=include_coordinates,
                     sasa_map=sasa_map,
                     h_pos=selected_h_pos,
-                    hbond_relation=evidence.hbond_relation)
+                    hbond_relation=evidence.hbond_relation,
+                    h_altloc=donor_conformer.active_altloc)

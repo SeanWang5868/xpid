@@ -59,6 +59,11 @@ def test_default_detection_has_hits(structure_5fjj):
             f"Hit {hit['X_res']}/{hit['X_atom']} → {hit['pi_res']}/{hit['pi_id']} has neither label"
 
 
+def test_prepared_benchmark_hydrogens_are_not_labelled_experimental(hits_5fjj):
+    assert hits_5fjj
+    assert {hit["H_source"] for hit in hits_5fjj} == {"added"}
+
+
 def test_default_detection_hudson_plevin_balance(structure_5fjj):
     hits = core.detect_interactions_in_structure(structure_5fjj, "5fjj")
     n_hudson = sum(h["is_hudson"] for h in hits)

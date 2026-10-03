@@ -189,6 +189,8 @@ def process_one_file(task: TaskPacket):
             diagnostics.get("cone_missing_parent_groups", set()))
         diagnostics["cone_parent_resolution_issues"] = sorted(
             diagnostics.get("cone_parent_resolution_issues", set()))
+        diagnostics["cone_covalent_state_exclusions"] = sorted(
+            diagnostics.get("cone_covalent_state_exclusions", set()))
         return diagnostics
 
     try:

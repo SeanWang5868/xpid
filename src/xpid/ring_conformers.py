@@ -1,5 +1,5 @@
 """Aromatic-ring coordinate context and altloc resolution."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import gemmi
 from typing import List, Set, Any, Dict
 import numpy as np
@@ -73,3 +73,5 @@ class RingContext:
     avg_pi_occ: float
     p_radius: float
     p_slab_half_thickness: float
+    connections: Dict = field(default_factory=dict)
+    max_b: float = 0.0

@@ -27,16 +27,13 @@ authors:
   - given-names: "Jon"
     family-names: "Agirre"
     affiliation: "York Structural Biology Laboratory, Department of Chemistry, University of York, York YO10 5DD, UK"
-version: "2.1.10"
-date-released: "2026-09-21"
-doi: "10.5281/zenodo.22875177"
+version: "2.1.11"
+date-released: "2026-10-03"
+doi: "10.5281/zenodo.22875176"
 identifiers:
   - type: doi
     value: "10.5281/zenodo.22875176"
     description: "Concept DOI representing all versions of Xpid."
-  - type: doi
-    value: "10.5281/zenodo.22875177"
-    description: "Version DOI for Xpid v2.1.10."
 repository-code: "https://github.com/SeanWang5868/xpid"
 url: "https://pypi.org/project/xpid/"
 license: MIT

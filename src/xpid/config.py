@@ -15,6 +15,7 @@ from .monomer_bonds import (
 DEFAULT_H_CHANGE = 4 
 
 TARGET_ELEMENTS_X = {'C', 'N', 'O', 'S'}
+MIN_ATOM_OCCUPANCY = 0.10
 
 
 def get_bonded_hydrogens(res_name: str, atom_name: str) -> set[str]:

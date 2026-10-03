@@ -1184,7 +1184,7 @@ def test_explicit_cys_deuterium_uses_sulfur_specific_bond_cutoff(monkeypatch):
     assert len(hits) == 1
     assert hits[0]["X_atom"] == "SG"
     assert hits[0]["H_atom"] == "DG"
-    assert hits[0]["H_source"] == "experimental"
+    assert hits[0]["H_source"] == "input_model"
 
 
 def test_unknown_ligand_requires_unambiguous_covalent_hydrogen(monkeypatch):

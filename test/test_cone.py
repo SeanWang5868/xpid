@@ -216,18 +216,18 @@ def test_hydroxyl_oxygen_remains_acceptor_when_protonated():
 
 
 def test_acceptor_protonation_ignores_incompatible_hydrogen_altloc():
-    sulfur = _atom("SD", "S", altloc="B")
-    hydrogen_a = _atom("H1", "H", (0.9, 0.0, 0.0), altloc="A")
-    met = _residue("MET", [sulfur, hydrogen_a])
-    sulfur = next(atom for atom in met if atom.name == "SD")
+    nitrogen = _atom("ND1", "N", altloc="B")
+    hydrogen_a = _atom("HD1", "H", (0.9, 0.0, 0.0), altloc="A")
+    his = _residue("HIS", [nitrogen, hydrogen_a])
+    nitrogen = next(atom for atom in his if atom.name == "ND1")
 
-    assert acceptors.is_hbond_acceptor(met, sulfur) is True
+    assert acceptors.is_hbond_acceptor(his, nitrogen) is True
 
-    met.add_atom(_atom("H2", "H", (0.9, 0.0, 0.0), altloc="B"))
+    his.add_atom(_atom("HD1", "H", (0.9, 0.0, 0.0), altloc="B"))
     # Gemmi may reallocate the residue's atom vector in add_atom(); reacquire
     # the wrapper instead of retaining a potentially invalid C++ reference.
-    sulfur = next(atom for atom in met if atom.name == "SD")
-    assert acceptors.is_hbond_acceptor(met, sulfur) is False
+    nitrogen = next(atom for atom in his if atom.name == "ND1")
+    assert acceptors.is_hbond_acceptor(his, nitrogen) is False
 
 
 def test_altloc_compatibility():

@@ -74,7 +74,9 @@ def _h_source(h_atom: Optional[gemmi.Atom], is_cone: bool) -> str:
         return "cone_virtual"
     if h_atom is not None and h_atom.flag == "G":
         return "added"
-    return "experimental"
+    if h_atom is not None and h_atom.flag == "S":
+        return "adjusted"
+    return "input_model"
 
 
 
@@ -119,7 +121,7 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "ring_conformers.RingContext",
                 include_coordinates: bool = False,
                 sasa_map: Optional[Dict] = None,
                 h_pos: Optional[np.ndarray] = None,
-                hbond_relation: str = "none"):
+                hbond_relation: str = "none", h_altloc: str = ""):
     
     if combined_occ < rctx.min_occ:
         return
@@ -138,14 +140,34 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "ring_conformers.RingContext",
     donor_rings = aromatic_rings.get_aromatic_rings(
         x_cra.residue.name)
     for d_ring_atoms in donor_rings:
+        if x_atom.name not in d_ring_atoms:
+            continue
         donor_ring_variants = ring_conformers._atom_variants_for_names(
             x_cra.residue, d_ring_atoms)
         x_altloc = ring_conformers._altloc(x_atom)
+        donor_h_altloc = ring_conformers._altloc(h_atom) if h_atom is not None else h_altloc
         for donor_ring_altloc, d_pi_atoms in donor_ring_variants:
-            if (x_altloc and donor_ring_altloc and
-                    x_altloc != donor_ring_altloc):
+            if any(label and donor_ring_altloc and label != donor_ring_altloc
+                   for label in (x_altloc, donor_h_altloc, rctx.pi_alt)):
                 continue
-            _, d_center, d_normal, _ = geometry.get_pi_info(d_pi_atoms)
+            # Use exactly the donor's operation AND lattice translation for
+            # the entire ring. Nearest-image queries per atom can split a ring.
+            cell = rctx.ns.grid_cell
+            def image_position(pos):
+                if not sym_op:
+                    return pos
+                return cell.orthogonalize(
+                    cell.images[sym_op - 1].apply(cell.fractionalize(pos)))
+            image_x = image_position(x_atom.pos)
+            translation = x_pos - np.array([image_x.x, image_x.y, image_x.z])
+            image_atoms = []
+            for atom in d_pi_atoms:
+                copy = atom.clone()
+                pos = image_position(atom.pos)
+                copy.pos = gemmi.Position(*(
+                    np.array([pos.x, pos.y, pos.z]) + translation))
+                image_atoms.append(copy)
+            _, d_center, d_normal, _ = geometry.get_pi_info(image_atoms)
             pp_dist, pp_angle, _ = geometry.calculate_pi_pi_geometry(
                 rctx.pi_center_arr, rctx.pi_normal, d_center, d_normal)
             if (3.0 <= pp_dist <= config.PI_PI_DIST_MAX and
@@ -176,7 +198,7 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "ring_conformers.RingContext",
         'H_source': h_source,
         'H_altloc': (
             ring_conformers._altloc(h_atom)
-            if h_atom is not None else ""),
+            if h_atom is not None else h_altloc),
         'combined_occupancy': _round_float(combined_occ, 4),
         'is_hudson': metrics['is_hudson'],
         'is_plevin': metrics['is_plevin'],
@@ -205,7 +227,7 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "ring_conformers.RingContext",
         '_pi_ring_key': rctx.mode,
         '_pi_alt': rctx.pi_alt,
         '_X_alt': ring_conformers._altloc(x_atom),
-        '_H_alt': ring_conformers._altloc(h_atom) if h_atom is not None else "",
+        '_H_alt': ring_conformers._altloc(h_atom) if h_atom is not None else h_altloc,
         'hbond_relation': hbond_relation,
     }
 
@@ -231,16 +253,15 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "ring_conformers.RingContext",
         'H_xyz_z': _round_float(h_pos[2], 3) if h_pos is not None else None,
     })
 
+    canonical_normal = xhpi_criteria._canonical_unit_normal(rctx.pi_normal)
+    hit['X_side_of_pi'] = xhpi_criteria._side_of_plane(
+        x_pos, rctx.pi_center_arr, canonical_normal
+    ) if canonical_normal is not None else 0
     if include_coordinates:
-        canonical_normal = xhpi_criteria._canonical_unit_normal(
-            rctx.pi_normal)
         hit.update({
             'pi_normal_x': _round_float(canonical_normal[0], 6) if canonical_normal is not None else None,
             'pi_normal_y': _round_float(canonical_normal[1], 6) if canonical_normal is not None else None,
             'pi_normal_z': _round_float(canonical_normal[2], 6) if canonical_normal is not None else None,
-            'X_side_of_pi': xhpi_criteria._side_of_plane(
-                x_pos, rctx.pi_center_arr, canonical_normal
-            ) if canonical_normal is not None else 0,
         })
 
     if sasa_map:
