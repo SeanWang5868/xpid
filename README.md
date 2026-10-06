@@ -11,11 +11,10 @@ the CCP4 monomer library for chemical perception and hydrogen placement.
 
 Xpid:
 
-- identifies aromatic rings from CCP4 monomer dictionaries;
+- identifies aromatic rings from CCP4 monomer lib;
 - evaluates rigid X–H vectors and chemically supported rotatable X–H groups;
 - applies steric filtering and the Hudson/Plevin geometric criteria;
 - can include crystallographic symmetry contacts, SASA and cooperativity;
-- writes machine-readable results and run diagnostics.
 
 ## Installation
 
@@ -28,9 +27,6 @@ Parquet output requires the optional dependencies:
 ```bash
 pip install "xpid[parquet]"
 ```
-
-Xpid uses an installed CCP4 monomer library when available. Otherwise, it
-downloads and caches a compatible copy automatically.
 
 ## Quick start
 
