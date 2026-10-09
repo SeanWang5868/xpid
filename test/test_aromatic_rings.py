@@ -29,6 +29,23 @@ def _write_component_cif(
     path.write_text("\n".join(lines) + "\n")
 
 
+def _write_component_cif_pdbx_aromatic(
+        path: Path,
+        component: str,
+        aromatic_bonds: list[tuple[str, str]]) -> None:
+    """Write a minimal CIF using the newer wwPDB aromatic flag column."""
+    lines = [
+        f"data_comp_{component}",
+        "loop_",
+        "_chem_comp_bond.atom_id_1",
+        "_chem_comp_bond.atom_id_2",
+        "_chem_comp_bond.pdbx_aromatic_flag",
+    ]
+    lines.extend(f"{atom_1} {atom_2} y"
+                 for atom_1, atom_2 in aromatic_bonds)
+    path.write_text("\n".join(lines) + "\n")
+
+
 @pytest.fixture(autouse=True)
 def _clear_ring_cache():
     aromatic_rings.clear_cache()
@@ -87,6 +104,37 @@ def test_aromatic_ligand_six_membered_cycle(tmp_path, monkeypatch):
         aromatic_rings.monlib, "find_monomer_cif", lambda _: cif_path)
 
     assert aromatic_rings.get_aromatic_rings("BEN") == [set(atoms)]
+
+
+def test_ligand_with_pdbx_aromatic_flag_returns_three_rings(
+        tmp_path, monkeypatch):
+    # A ligand dictionary using the newer wwPDB column
+    # ``_chem_comp_bond.pdbx_aromatic_flag`` (instead of the classic
+    # ``_chem_comp_bond.aromatic``) must still yield every aromatic ring.
+    cif_path = tmp_path / "6KE.cif"
+    rings = [
+        [("C1", "C2"), ("C2", "C3"), ("C3", "C4"),
+         ("C4", "C5"), ("C5", "C6"), ("C6", "C1")],
+        [("C10", "N4"), ("N4", "C13"), ("C13", "C12"),
+         ("C12", "C11"), ("C11", "N3"), ("N3", "C10")],
+        [("C15", "C16"), ("C16", "C17"), ("C17", "C18"),
+         ("C18", "C19"), ("C19", "C20"), ("C20", "C15")],
+    ]
+    _write_component_cif_pdbx_aromatic(
+        cif_path, "6KE", [bond for ring in rings for bond in ring])
+    monkeypatch.setattr(
+        aromatic_rings.monlib, "find_monomer_cif",
+        lambda component: cif_path if component == "6KE" else None,
+    )
+
+    result = aromatic_rings.get_aromatic_rings("6KE")
+
+    assert len(result) == 3
+    assert {frozenset(ring) for ring in result} == {
+        frozenset({"C1", "C2", "C3", "C4", "C5", "C6"}),
+        frozenset({"C10", "C11", "C12", "C13", "N3", "N4"}),
+        frozenset({"C15", "C16", "C17", "C18", "C19", "C20"}),
+    }
 
 
 def test_fused_aromatic_graph_returns_only_two_minimal_cycles():

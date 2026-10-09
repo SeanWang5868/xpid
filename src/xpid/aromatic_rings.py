@@ -119,9 +119,11 @@ def _standard_rings_are_complete(res_name: str,
 def get_aromatic_rings(res_name: str) -> List[Set[str]]:
     """Return dictionary-backed five- and six-membered aromatic rings.
 
-    Only complete chordless cycles made entirely from
-    ``_chem_comp_bond.aromatic = y`` bonds are accepted. PHE, TYR, TRP and
-    HIS use built-in definitions when their dictionary is missing or unusable.
+    Only complete chordless cycles made entirely from aromatic bonds
+    (``_chem_comp_bond.aromatic = y``, or the newer wwPDB spelling
+    ``_chem_comp_bond.pdbx_aromatic_flag = y``) are accepted. PHE, TYR, TRP
+    and HIS use built-in definitions when their dictionary is missing or
+    unusable.
     """
     res_upper = res_name.upper()
     cif_path = monlib.find_monomer_cif(res_upper)
@@ -139,16 +141,24 @@ def get_aromatic_rings(res_name: str) -> List[Set[str]]:
 
             if block is not None:
                 aromatic_edges = []
-                for atom_1, atom_2, aromatic in block.find([
-                    "_chem_comp_bond.atom_id_1",
-                    "_chem_comp_bond.atom_id_2",
-                    "_chem_comp_bond.aromatic",
-                ]):
-                    atom_1 = atom_1.strip()
-                    atom_2 = atom_2.strip()
-                    if (atom_1 and atom_2 and
-                            str(aromatic).lower() in {"y", "yes"}):
-                        aromatic_edges.append((atom_1, atom_2))
+                # Classic CCP4 column first; fall back to the newer wwPDB/
+                # PDBx spelling used by many ligand dictionaries.
+                for flag_tag in ("_chem_comp_bond.aromatic",
+                                 "_chem_comp_bond.pdbx_aromatic_flag"):
+                    edges = []
+                    for atom_1, atom_2, aromatic in block.find([
+                        "_chem_comp_bond.atom_id_1",
+                        "_chem_comp_bond.atom_id_2",
+                        flag_tag,
+                    ]):
+                        atom_1 = atom_1.strip()
+                        atom_2 = atom_2.strip()
+                        if (atom_1 and atom_2 and
+                                str(aromatic).lower() in {"y", "yes"}):
+                            edges.append((atom_1, atom_2))
+                    if edges:
+                        aromatic_edges = edges
+                        break
                 rings = _minimal_aromatic_cycles(aromatic_edges)
         except Exception as exc:
             logger.warning(
