@@ -71,6 +71,10 @@ PROPKA pKa estimates and conservative microstate assignment; uncertain sites
 are reported, not forced into positive detections. See [scope, overrides and
 validation](docs/protonation.md). Without `--ph`, preparation is unchanged.
 
+Use `--hbond-audit` to record whether Cone hydrogen-bond directions coexist
+with, or differ from, XH–π directions. It writes diagnostics only and does not
+filter interactions. See [hydrogen-bond audit](docs/hbond-audit.md).
+
 ## Detection model
 
 By default, Xpid reports a contact when either the Hudson or Plevin definition

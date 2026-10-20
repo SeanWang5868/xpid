@@ -140,7 +140,17 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                          Set[tuple[int, str, str, str]]
                                      ] = None,
                                      protonation=None,
+                                     hbond_audit: bool = False,
                                      ) -> List[Dict[str, Any]]:
+    if hbond_audit:
+        if diagnostics is None:
+            raise ValueError("hbond_audit requires a diagnostics dictionary")
+        if cone_mode != "auto" or report_xh_candidates:
+            raise ValueError("hbond_audit requires Cone auto and cannot be combined with XH-candidate export")
+        from .hbond_audit import new_audit
+        diagnostics["hbond_audit"] = new_audit()
+    elif diagnostics is not None:
+        diagnostics.pop("hbond_audit", None)
     results = []
     if not structure or len(structure) == 0: return []
 
@@ -692,7 +702,7 @@ def _run_cone_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_mark, 
             x_pos_arr, is_sym_mate, dist_x_pi, dist_x_centroid, proj_dist,
             combined_occ, sym_op, include_p_slab, include_coordinates,
             sasa_map, hits, report_xh_candidates, donor_definition,
-            donor_conformer, symmetry_code)
+            donor_conformer, symmetry_code, diagnostics)
 
 
 def _run_cone_conformer(
@@ -704,6 +714,7 @@ def _run_cone_conformer(
         donor_definition: rotatable_groups.RotatableGroupDefinition,
         donor_conformer: rotatable_groups.DonorConformer,
         symmetry_code: str,
+        diagnostics=None,
         ) -> None:
     """Evaluate one internally consistent X-parent alternate conformer."""
     parent_name = donor_definition.parent_atom_name
@@ -778,11 +789,36 @@ def _run_cone_conformer(
             n_cra.atom.occ,
         ))
 
+    audit_sink = diagnostics.get("hbond_audit") if diagnostics is not None else None
+    raw_audit = None
+    if audit_sink is not None:
+        audit_sink["pairs_seen"] += 1
+        if len(audit_sink["pairs"]) < audit_sink["max_pairs"]:
+            raw_audit = {}
+        else:
+            audit_sink["pairs_omitted"] += 1
     evidence = cone.evaluate_binary(
         rctx, donor_definition, parent_pos_arr, x_pos_arr, x_elem,
         environment, dist_x_pi, dist_x_centroid, proj_dist,
         include_p_slab=include_p_slab,
+        audit=raw_audit,
     )
+    if raw_audit is not None:
+        from . import hbond_audit
+        contacts = hbond_audit.gather_contacts(
+            rctx, donor_conformer, x_pos_arr, parent_pos_arr, donor_definition, combined_occ)
+        identity = {"model_index": rctx.model_index, "model": str(rctx.model_id),
+                    "X_chain": x_cra.chain.name, "X_res": x_res.name,
+                    "X_id": str(x_res.seqid).strip(), "X_atom": x_atom.name,
+                    "X_altloc": donor_conformer.x_altloc,
+                    "parent_atom": parent_atom.name, "parent_altloc": donor_conformer.parent_altloc,
+                    "donor_symmetry_code": symmetry_code,
+                    "X_position": x_pos_arr.tolist(), "parent_position": parent_pos_arr.tolist(),
+                    "pi_chain": rctx.chain.name, "pi_res": rctx.residue.name,
+                    "pi_id": str(rctx.residue.seqid).strip(), "pi_ring": rctx.mode,
+                    "pi_altloc": rctx.pi_alt, "includes_p_slab": include_p_slab,
+                    "detected": evidence is not None}
+        audit_sink["pairs"].append(hbond_audit.summarize(raw_audit, x_pos_arr, contacts, identity, x_elem))
     if evidence is not None:
         conformer_occupancy = min(
             combined_occ, donor_conformer.occupancy)

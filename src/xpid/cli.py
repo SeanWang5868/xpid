@@ -76,6 +76,7 @@ class TaskPacket(NamedTuple):
     ph: Optional[str] = None
     pka_method: str = "propka"
     protonation_overrides: Optional[str] = None
+    hbond_audit: bool = False
 
 
 class WorkerResult(NamedTuple):
@@ -246,6 +247,7 @@ def process_one_file(task: TaskPacket):
             excluded_donor_residues=excluded_donor_residues,
             diagnostics=diagnostics,
             protonation=ph_context,
+            hbond_audit=task.hbond_audit,
         )
 
         count = len(results)
@@ -381,6 +383,8 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Export all X-H bonds passing Hudson/Plevin X-position filters, including direction-failed candidates.")
     proc.add_argument('--sym-contacts', action='store_true',
                       help="Detect XH-π interactions across crystallographic symmetry mates.")
+    proc.add_argument('--hbond-audit', action='store_true',
+                      help="Audit Cone/H-bond compatibility in diagnostics; never changes detected hits.")
     proc.add_argument('--include-water', action='store_true',
                       help="Include water molecules as potential XH-π donors.")
     proc.add_argument('--max-b', type=float, default=0.0,
@@ -434,6 +438,8 @@ def _allow_remote_recovery(args: argparse.Namespace, files: List[Path]) -> bool:
 def main():
     parser = _build_parser()
     args = parser.parse_args()
+    if args.hbond_audit and (args.no_cone or args.report_xh_candidates):
+        parser.error("--hbond-audit requires Cone auto and cannot be combined with --xh-candidates")
     try:
         protonation_pka.validate_options(args.ph, args.pka_method, args.h_mode)
         if args.protonation_overrides:
@@ -527,6 +533,8 @@ def main():
             ("Residue pair", f"{args.residue_pair[0]} <-> {args.residue_pair[1]}"))
     if args.ph is not None:
         detection_rows.append(("Protonation", f"pH {args.ph}; {args.pka_method}; conservative microstates"))
+    if args.hbond_audit:
+        detection_rows.append(("H-bond audit", "on (diagnostics only; no filtering)"))
 
     result_layout = (
         f"separate {args.file_type.upper()} files" if args.separate
@@ -570,7 +578,7 @@ def main():
                    tuple(args.residue_pair) if args.residue_pair else None,
                    allow_remote_recovery, args.min_occ,
                    args.sym_contacts, args.include_water, args.max_b,
-                   args.ph, args.pka_method, args.protonation_overrides)
+                   args.ph, args.pka_method, args.protonation_overrides, args.hbond_audit)
         for f in files
     ]
 
@@ -625,6 +633,10 @@ def main():
                 logger.warning("Structure processing failed:\n%s", err)
 
             total_found += count
+            audit = structure_diagnostics.get("hbond_audit", {})
+            if audit.get("pairs_omitted", 0):
+                logger.warning("H-bond audit for %s truncated: %d pair records omitted; detection is unaffected.",
+                               structure_diagnostics.get("pdb"), audit["pairs_omitted"])
             add_system_summary(system_totals, system_summary)
 
             if not args.separate and data:

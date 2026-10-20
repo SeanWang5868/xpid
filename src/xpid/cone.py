@@ -306,6 +306,7 @@ def evaluate_binary(
     dist_x_centroid: float,
     proj_dist: Optional[float],
     include_p_slab: bool = False,
+    audit: Optional[dict] = None,
 ) -> Optional[PositiveEvidence]:
     """Return one self-consistent positive H conformer, or ``None``.
 
@@ -315,6 +316,9 @@ def evaluate_binary(
     conformers = generate_conformers(parent_pos, x_pos, definition)
     valid_mask, strong_flags = _classify_conformer_arrays(
         conformers, x_pos, environment)
+    if audit is not None:
+        audit.update(conformers=conformers, valid_mask=valid_mask,
+                     pi_mask=np.zeros((len(conformers), definition.hydrogen_count), dtype=bool))
     valid_indices = np.flatnonzero(valid_mask)
     if valid_indices.size == 0:
         return None
@@ -338,6 +342,8 @@ def evaluate_binary(
                 )
                 if (metrics["is_hudson"] or metrics["is_plevin"] or
                         metrics["is_p_slab"]):
+                    if audit is not None:
+                        audit["pi_mask"][conformer_index, h_index] = True
                     relation = _candidate_hbond_relation(
                         h_index, strong_flags[conformer_index],
                         alternative_hbond_exists)
@@ -359,6 +365,10 @@ def evaluate_binary(
         xhpi_criteria.evaluate_hudson_plevin_batch(
             rctx, x_pos, h_positions, spatial))
     positive_indices = np.flatnonzero(is_hudson | is_plevin)
+    if audit is not None:
+        for index in positive_indices:
+            ci, hi = candidate_map[int(index)]
+            audit["pi_mask"][ci, hi] = True
     if positive_indices.size == 0:
         return None
 

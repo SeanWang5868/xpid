@@ -37,12 +37,15 @@ def detect(
     pka_method: str = "propka",
     protonation_overrides: Optional[Union[str, Path]] = None,
     diagnostics: Optional[Dict[str, Any]] = None,
+    hbond_audit: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     API entry point to run analysis on a single file from Python code.
     """
     if on_error not in {"raise", "empty"}:
         raise ValueError("on_error must be 'raise' or 'empty'")
+    if hbond_audit and (diagnostics is None or cone_mode != "auto" or report_xh_candidates):
+        raise ValueError("hbond_audit requires diagnostics, Cone auto, and no XH-candidate export")
     protonation_pka.validate_options(ph, pka_method, h_mode)
     if protonation_overrides is not None and ph is None:
         raise ValueError("protonation_overrides requires ph")
@@ -92,6 +95,7 @@ def detect(
             excluded_donor_residues=prepared.report.excluded_donor_keys(),
             protonation=ph_context,
             diagnostics=diagnostics,
+            hbond_audit=hbond_audit,
         )
         return results
 
