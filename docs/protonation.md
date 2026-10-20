@@ -136,10 +136,14 @@ Run the new chemical-state tests with
 `python -m pytest -q`. They check H counts/occupancies, charge vs tautomer,
 altloc identities, metal protection, deprotonated Cone suppression, acidic
 O–H detection, default-path compatibility, API/CLI agreement and output schemas.
-These tests and a real-structure smoke run establish implementation behaviour,
+These tests and an eight-structure pH sweep establish implementation behaviour,
 **not the accuracy of automatic protonation assignments**. Independent neutron
 validation across pH, metal sites and tautomer classes is still required before
 using this option as a production replacement for the default preparation.
+The [validation record](protonation-validation.md) includes an important
+counterexample: the pKa-based charge assigned to 2ZOI HIS A108 differs from
+the charge suggested by its deposited D atoms. A dominant predicted population
+must not be mistaken for reliable experimental identification of that state.
 
 Method references: [PROPKA documentation and citation guidance](https://propka.readthedocs.io/en/latest/),
 [Gemmi monomer-library chemistry](https://gemmi.readthedocs.io/en/latest/chemistry.html).
