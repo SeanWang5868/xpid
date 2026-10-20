@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Literal, Optional, Union
 from . import hydrogen_prep
 from . import detector
 from . import structure_io
+from . import protonation, protonation_pka
 
 logger = logging.getLogger("xpid")
 
@@ -32,12 +33,19 @@ def detect(
     include_water: bool = False,
     max_b: float = 0.0,
     on_error: Literal["raise", "empty"] = "raise",
+    ph: Optional[Union[float, str]] = None,
+    pka_method: str = "propka",
+    protonation_overrides: Optional[Union[str, Path]] = None,
+    diagnostics: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     API entry point to run analysis on a single file from Python code.
     """
     if on_error not in {"raise", "empty"}:
         raise ValueError("on_error must be 'raise' or 'empty'")
+    protonation_pka.validate_options(ph, pka_method, h_mode)
+    if protonation_overrides is not None and ph is None:
+        raise ValueError("protonation_overrides requires ph")
     path_obj = Path(file_path)
     # Handle filename extraction
     if path_obj.name.count('.') > 1:
@@ -50,6 +58,15 @@ def detect(
         prepared = hydrogen_prep.prepare_hydrogens_memory(
             structure, h_change_val=h_mode)
         structure = prepared.structure
+        ph_context = None
+        if diagnostics is not None:
+            diagnostics["hydrogen_preparation"] = prepared.report.to_dict()
+        if ph is not None:
+            ph_context = protonation.prepare(
+                structure, path_obj, ph, pka_method, protonation_overrides,
+                prepared.report.excluded_donor_keys(), model_mode=model_mode)
+            if diagnostics is not None:
+                diagnostics["protonation"] = ph_context.to_dict()
 
         if not structure:
             return []
@@ -73,6 +90,8 @@ def detect(
             include_water=include_water,
             max_b=max_b,
             excluded_donor_residues=prepared.report.excluded_donor_keys(),
+            protonation=ph_context,
+            diagnostics=diagnostics,
         )
         return results
 

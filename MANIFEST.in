@@ -1,5 +1,6 @@
 include README.md
 include LICENSE
+recursive-include docs *.md
 recursive-include src/xpid *.py
 recursive-include src/xpid/monomers *
 global-exclude .DS_Store

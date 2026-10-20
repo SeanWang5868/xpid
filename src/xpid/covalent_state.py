@@ -32,7 +32,7 @@ def allows_cone(residue: gemmi.Residue, chain_name: str,
                 conformer: rotatable_groups.DonorConformer,
                 definition: rotatable_groups.RotatableGroupDefinition,
                 connections: dict, ns: gemmi.NeighborSearch,
-                model: gemmi.Model) -> bool:
+                model: gemmi.Model, formal_charge=None) -> bool:
     """A terminal group needs one heavy parent and an available X–H valence.
 
     Declared covalent/coordination links take precedence over distance guesses.
@@ -42,7 +42,8 @@ def allows_cone(residue: gemmi.Residue, chain_name: str,
     """
     x, parent = conformer.x_atom, conformer.parent_atom
     altloc = conformer.active_altloc
-    if x.element.name.upper() != definition.element or x.charge != 0:
+    charge = x.charge if formal_charge is None else formal_charge
+    if x.element.name.upper() != definition.element or charge != 0:
         return False
     heavy_names = monomer_bonds.get_bonded_heavy_atom_names(residue.name, x.name)
     if heavy_names is not None and heavy_names != {definition.parent_atom_name}:

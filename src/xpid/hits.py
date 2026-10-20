@@ -76,6 +76,8 @@ def _h_source(h_atom: Optional[gemmi.Atom], is_cone: bool) -> str:
         return "added"
     if h_atom is not None and h_atom.flag == "S":
         return "adjusted"
+    if h_atom is not None and h_atom.flag == "P":
+        return "ph_model"
     return "input_model"
 
 
@@ -305,4 +307,8 @@ def _record_hit(hits: List[Dict[str, Any]], rctx: "ring_conformers.RingContext",
             p_geometry['is_p_slab'] = metrics['is_p_slab']
         hit.update(p_geometry)
 
+    if rctx.protonation is not None:
+        hit.update(rctx.protonation.hit_fields(
+            rctx.model_index, x_cra.chain.name, x_cra.residue, x_atom,
+            rctx.chain.name, rctx.residue, rctx.pi_alt, hit["H_altloc"]))
     hits.append(hit)

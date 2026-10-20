@@ -37,6 +37,9 @@ def build_metadata(
         "file_count": file_count,
         "parameters": {
             "h_mode": getattr(args, "h_mode", 4),
+            "ph": getattr(args, "ph", None),
+            "pka_method": getattr(args, "pka_method", "propka"),
+            "protonation_overrides": getattr(args, "protonation_overrides", None),
             "file_type": getattr(args, "file_type", "json"),
             "verbose": getattr(args, "verbose", False),
             "include_coordinates": getattr(args, "include_coordinates", False),

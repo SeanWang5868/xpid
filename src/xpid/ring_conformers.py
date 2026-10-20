@@ -75,3 +75,5 @@ class RingContext:
     p_slab_half_thickness: float
     connections: Dict = field(default_factory=dict)
     max_b: float = 0.0
+    protonation: Any = None
+    model_index: int = 0

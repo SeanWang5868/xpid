@@ -36,6 +36,14 @@ class Field:
 # ---------------------------------------------------------------------------
 
 FIELDS: Tuple[Field, ...] = (
+    # Opt-in pH model metadata; populations are not experimental occupancies.
+    Field("pH", "float", "protonation"),
+    Field("protonation_method", "str", "protonation"),
+    Field("X_protonation_state", "str", "protonation"),
+    Field("X_protonation_source", "str", "protonation"),
+    Field("X_site_pKa", "float", "protonation"),
+    Field("X_protonated_fraction", "float", "protonation"),
+    Field("pi_protonation_state", "str", "protonation"),
     # -- Identity -----------------------------------------------------------
     Field("pdb", "str", "base", "", "PDB code or filename stem"),
     Field("model", "str", "base", "", "Model identifier"),

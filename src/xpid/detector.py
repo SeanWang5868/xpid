@@ -138,7 +138,8 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                      diagnostics: Optional[Dict[str, Any]] = None,
                                      excluded_donor_residues: Optional[
                                          Set[tuple[int, str, str, str]]
-                                     ] = None
+                                     ] = None,
+                                     protonation=None,
                                      ) -> List[Dict[str, Any]]:
     results = []
     if not structure or len(structure) == 0: return []
@@ -205,6 +206,9 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                                 f"{str(residue.seqid).strip()}:"
                                 f"{res_name}:{mode}")
                     for pi_alt, pi_atoms in ring_variants:
+                        if protonation is not None and not protonation.pi_allowed(
+                                model_index, chain.name, residue, pi_alt):
+                            continue
                         results.extend(_detect_residue(
                             pdb_name, resolution, model, model_index, model_id,
                             chain, residue, ns, ss_index,
@@ -215,6 +219,7 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
                             excluded_donor_residues=excluded_donor_residues,
                             diagnostics=diagnostics,
                             include_water=include_water, connections=connections,
+                            protonation=protonation,
                         ))
     hits = _hits._deduplicate_hits(results, prefer_directional=not report_xh_candidates)
     if annotate_cooperativity:
@@ -230,10 +235,10 @@ def detect_interactions_in_structure(structure: gemmi.Structure,
         hbond_ns.populate(include_h=False)
         hbond_annotations.annotate_explicit_hbond_context(
             model_hits, structure, model_index=model_index, ns=hbond_ns,
-            min_occ=min_occ, max_b=max_b)
+            min_occ=min_occ, max_b=max_b, protonation=protonation)
         hbond_annotations.annotate_cone_hbond_context(
             model_hits, structure, model_index=model_index, ns=hbond_ns,
-            min_occ=min_occ, max_b=max_b)
+            min_occ=min_occ, max_b=max_b, protonation=protonation)
     for hit in hits:
         unexpected_fields = schema.validate_hit(hit)
         if unexpected_fields:
@@ -289,7 +294,7 @@ def _detect_residue(pdb_name, resolution, model, model_index, model_id,
                         Set[tuple[int, str, str, str]]] = None,
                     diagnostics: Optional[Dict[str, Any]] = None,
                     include_water: bool = False,
-                    connections: Optional[Dict] = None):
+                    connections: Optional[Dict] = None, protonation=None):
     hits = []
 
     max_planar_dev = geometry.calculate_planarity_deviation(pi_atoms)
@@ -314,6 +319,7 @@ def _detect_residue(pdb_name, resolution, model, model_index, model_id,
         avg_pi_occ=avg_pi_occ, p_radius=p_radius,
         p_slab_half_thickness=config.P_SLAB_HALF_THICKNESS,
         connections=connections or {}, max_b=max_b,
+        protonation=protonation, model_index=model_index,
     )
 
     x_candidates = ns.find_atoms(pi_center, alt=pi_alt or "\0", radius=config.DIST_SEARCH_LIMIT)
@@ -356,8 +362,16 @@ def _detect_residue(pdb_name, resolution, model, model_index, model_id,
                 x_res.name == residue.name):
             continue
 
-        if (x_res_name in ('ASP', 'GLU') and x_atom.name in ('OD1', 'OD2', 'OE1', 'OE2')) or \
-           (x_atom.name == 'OXT'):
+        ph_h_names = (None if protonation is None else protonation.hydrogen_names(
+            model_index, x_cra.chain.name, x_res, x_atom))
+        # A shared X may participate in separately assigned alternate groups.
+        # Defer its state check to the explicit-H / full-Cone conformer below.
+        defer_ph_alt = protonation is not None and protonation.shared_alternates(
+            model_index, x_cra.chain.name, x_res, x_atom)
+        if ph_h_names is not None and not ph_h_names and not defer_ph_alt:
+            continue
+        if ph_h_names is None and ((x_res_name in ('ASP', 'GLU') and x_atom.name in ('OD1', 'OD2', 'OE1', 'OE2')) or
+                                  x_atom.name == 'OXT'):
             continue
 
         if _is_cation_pi_donor(x_res_name, x_atom.name):
@@ -500,6 +514,12 @@ def _run_explicit_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_ma
 
         bonded_hydrogens = monomer_bonds.get_bonded_hydrogen_names(
             x_cra.residue.name, x_atom.name)
+        if rctx.protonation is not None:
+            state_h = rctx.protonation.hydrogen_names(
+                rctx.model_index, x_cra.chain.name, x_cra.residue, x_atom,
+                ring_conformers._altloc(h_atom))
+            if state_h is not None:
+                bonded_hydrogens = state_h
         if bonded_hydrogens is not None:
             canonical_h_name = monomer_bonds.canonical_hydrogen_name(
                 h_atom.name)
@@ -647,9 +667,20 @@ def _run_cone_track(rctx: "ring_conformers.RingContext", x_cra, x_atom, x_mark, 
                 x_atom, rctx.model, rctx.ns,
                 active_altloc=donor_conformer.active_altloc):
             continue
+        site_charge = None
+        if rctx.protonation is not None:
+            site = rctx.protonation.lookup(
+                model_index, x_cra.chain.name, x_res, x_atom,
+                donor_conformer.active_altloc)
+            if site is not None:
+                if not rctx.protonation.hydrogen_names(
+                        model_index, x_cra.chain.name, x_res, x_atom,
+                        donor_conformer.active_altloc):
+                    continue
+                site_charge = site.charge
         if not covalent_state.allows_cone(
                 x_res, x_cra.chain.name, donor_conformer, donor_definition,
-                rctx.connections, rctx.ns, rctx.model):
+                rctx.connections, rctx.ns, rctx.model, formal_charge=site_charge):
             if diagnostics is not None:
                 diagnostics.setdefault("cone_covalent_state_exclusions", set()).add(
                     f"{rctx.model_id}:{x_cra.chain.name}:"
@@ -736,9 +767,12 @@ def _run_cone_conformer(
             _pos_to_arr(n_effective_pos), n_cra.atom, n_cra.residue,
             n_cra.chain.name, n_mark.image_idx,
             cone.VDW_RADII.get(n_elem, cone.DEFAULT_VDW_RADIUS),
-            hbond_acceptors.is_hbond_acceptor(
+            (rctx.protonation.is_acceptor(
+                rctx.model_index, n_cra.chain.name, n_cra.residue, n_cra.atom,
+                donor_conformer.active_altloc or rctx.pi_alt)
+             if rctx.protonation is not None else hbond_acceptors.is_hbond_acceptor(
                 n_cra.residue, n_cra.atom,
-                altloc=donor_conformer.active_altloc or rctx.pi_alt)
+                altloc=donor_conformer.active_altloc or rctx.pi_alt))
             and min(combined_occ, donor_conformer.occupancy, n_cra.atom.occ) >= rctx.min_occ
             and (rctx.max_b <= 0 or n_cra.atom.b_iso <= rctx.max_b),
             n_cra.atom.occ,

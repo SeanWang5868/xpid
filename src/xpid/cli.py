@@ -21,6 +21,7 @@ except ImportError:
     from xpid.resolver import resolve_inputs
 from xpid import provenance
 from xpid import monlib
+from xpid import protonation, protonation_pka
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +73,9 @@ class TaskPacket(NamedTuple):
     sym_contacts: bool
     include_water: bool
     max_b: float
+    ph: Optional[str] = None
+    pka_method: str = "propka"
+    protonation_overrides: Optional[str] = None
 
 
 class WorkerResult(NamedTuple):
@@ -213,6 +217,14 @@ def process_one_file(task: TaskPacket):
             diagnostics["hydrogen_preparation"] = prepared.report.to_dict()
             excluded_donor_residues = prepared.report.excluded_donor_keys()
 
+        ph_context = None
+        if task.ph is not None:
+            ph_context = protonation.prepare(
+                structure, task.filepath, task.ph, task.pka_method,
+                task.protonation_overrides, excluded_donor_residues,
+                model_mode=task.model_mode)
+            diagnostics["protonation"] = ph_context.to_dict()
+
         results = detector.detect_interactions_in_structure(
             structure,
             pdb_name=pdb_code,
@@ -233,6 +245,7 @@ def process_one_file(task: TaskPacket):
             max_b=task.max_b,
             excluded_donor_residues=excluded_donor_residues,
             diagnostics=diagnostics,
+            protonation=ph_context,
         )
 
         count = len(results)
@@ -246,7 +259,8 @@ def process_one_file(task: TaskPacket):
                 include_xh_candidates=task.report_xh_candidates,
                 include_coordinates=task.include_coordinates,
                 include_sasa=task.include_sasa,
-                include_cooperativity=task.include_cooperativity) as streamer:
+                include_cooperativity=task.include_cooperativity,
+                include_protonation=task.ph is not None) as streamer:
                 streamer.write_chunk(results)
             return WorkerResult(
                 None, count, [], str(out_path), system_summary,
@@ -347,6 +361,12 @@ def _build_parser() -> argparse.ArgumentParser:
     proc = parser.add_argument_group("Processing Options")
     proc.add_argument('--h-mode', type=int, default=4,
                       help="Hydrogen handling mode (0-5). Default: 4.")
+    proc.add_argument('--ph', metavar='PH|auto',
+                      help="Opt-in pH-dependent protein side-chain protonation; auto reads experimental pH.")
+    proc.add_argument('--pka-method', choices=['propka', 'reference'], default='propka',
+                      help="pKa source for --ph (default: optional PROPKA; reference is an explicit approximation).")
+    proc.add_argument('--protonation-overrides', metavar='JSON',
+                      help="Explicit site microstates; requires --ph. See docs/protonation.md.")
     proc.add_argument('--jobs', type=int, default=1,
                       help="Number of CPU cores to use.")
     proc.add_argument('--model', type=str, default="0",
@@ -414,11 +434,21 @@ def _allow_remote_recovery(args: argparse.Namespace, files: List[Path]) -> bool:
 def main():
     parser = _build_parser()
     args = parser.parse_args()
+    try:
+        protonation_pka.validate_options(args.ph, args.pka_method, args.h_mode)
+        if args.protonation_overrides:
+            if args.ph is None:
+                raise ValueError("--protonation-overrides requires --ph")
+            protonation.read_overrides(args.protonation_overrides)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
 
     # Step 1: Gather input files
     input_resolution = resolve_inputs(
         args.inputs, args.pdb_list, args.pdb_mirror, args.redo_mirror)
     files = input_resolution.files
+    if args.protonation_overrides and len(files) != 1:
+        parser.error("--protonation-overrides requires exactly one input structure")
 
     if not files:
         print("No valid input files found. Please check inputs or list/mirror paths.")
@@ -495,6 +525,8 @@ def main():
     if args.residue_pair:
         detection_rows.append(
             ("Residue pair", f"{args.residue_pair[0]} <-> {args.residue_pair[1]}"))
+    if args.ph is not None:
+        detection_rows.append(("Protonation", f"pH {args.ph}; {args.pka_method}; conservative microstates"))
 
     result_layout = (
         f"separate {args.file_type.upper()} files" if args.separate
@@ -537,7 +569,8 @@ def main():
                    args.cooperativity,
                    tuple(args.residue_pair) if args.residue_pair else None,
                    allow_remote_recovery, args.min_occ,
-                   args.sym_contacts, args.include_water, args.max_b)
+                   args.sym_contacts, args.include_water, args.max_b,
+                   args.ph, args.pka_method, args.protonation_overrides)
         for f in files
     ]
 
@@ -559,7 +592,8 @@ def main():
                 include_xh_candidates=args.report_xh_candidates,
                 include_coordinates=args.include_coordinates,
                 include_sasa=args.sasa,
-                include_cooperativity=args.cooperativity)
+                include_cooperativity=args.cooperativity,
+                include_protonation=args.ph is not None)
             streamer.__enter__()
 
         for i, (err, count, data, out_path, system_summary,
@@ -626,7 +660,8 @@ def main():
                     record.get("cone_parent_resolution_issues") or
                     preparation.get("missing_monomer_components") or
                     preparation.get("skipped_residues") or
-                    preparation.get("protected_neighbor_residues")):
+                    preparation.get("protected_neighbor_residues") or
+                    record.get("protonation", {}).get("unresolved_sites")):
                 chemical_warning_structures += 1
 
         sys.stdout.write("\n")
@@ -662,6 +697,14 @@ def main():
             output_dir.resolve() if args.separate
             else merge_file_path.resolve()
         )
+        ph_summary = []
+        if args.ph is not None:
+            ph_summary = [
+                ("pH sites resolved", sum(r.get("protonation", {}).get("resolved_sites", 0)
+                                          for r in diagnostics_records)),
+                ("pH sites unresolved", sum(r.get("protonation", {}).get("unresolved_sites", 0)
+                                            for r in diagnostics_records)),
+            ]
         summary = _format_sections("Run complete", [
             ("Processing", [
                 ("Structures", len(files)),
@@ -674,7 +717,7 @@ def main():
                 ("H-prep residues skipped", skipped_residue_count),
                 ("Polymer neighbors protected", protected_neighbor_count),
                 ("Chemical warnings", chemical_warning_structures),
-            ]),
+            ] + ph_summary),
             ("Candidates" if args.report_xh_candidates else "Interactions",
              interaction_rows),
             ("Output", [

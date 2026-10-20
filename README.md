@@ -59,6 +59,18 @@ Add `--redo-mirror /path/to/pdb-redo` to prefer PDB-REDO models, or
 
 Run `xpid --help` for the complete command-line reference.
 
+Optional pH-dependent protein side-chain protonation:
+
+```bash
+pip install "xpid[ph]"
+xpid model.cif --ph 7.0 --out-dir xpid_ph --provenance
+```
+
+Use `--ph auto` to read a unique experimental pH. This opt-in model uses
+PROPKA pKa estimates and conservative microstate assignment; uncertain sites
+are reported, not forced into positive detections. See [scope, overrides and
+validation](docs/protonation.md). Without `--ph`, preparation is unchanged.
+
 ## Detection model
 
 By default, Xpid reports a contact when either the Hudson or Plevin definition
@@ -98,7 +110,8 @@ hydrogen, and includes the main geometry together with `is_hudson` and
 
 `H_source` records `input_model` (input H/D coordinates), `added` (hydrogens
 generated during preparation), `adjusted` (input H/D moved during preparation)
-or `cone_virtual`. Input coordinates alone do not establish that a hydrogen
+or `cone_virtual`; `ph_model` identifies an explicitly assigned pH-state H.
+Input coordinates alone do not establish that a hydrogen
 was experimentally observed. Virtual H inherit the active parent/X conformer.
 Cone requires a terminal, covalently compatible group with available X–H
 valence; declared cross-links and coordination are retained during this check.

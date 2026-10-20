@@ -21,6 +21,7 @@ Repository = "https://github.com/SeanWang5868/xpid"
 Issues = "https://github.com/SeanWang5868/xpid/issues"
 
 [project.optional-dependencies]
+ph = ["propka>=3.5,<4"]
 parquet = [
     "pandas",
     "pyarrow"

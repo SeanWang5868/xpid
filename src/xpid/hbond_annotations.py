@@ -35,7 +35,8 @@ def _competition_score(d_ha: float, angle_dha: float,
 
 
 def _hbond_contacts(hit: Dict[str, Any], model: gemmi.Model,
-                    ns: gemmi.NeighborSearch, min_occ: float, max_b: float):
+                    ns: gemmi.NeighborSearch, min_occ: float, max_b: float,
+                    protonation=None, model_index=0):
     """Yield acceptors in the same occupied alternate state as X, H and π."""
     h_xyz = [hit.get(f"H_xyz_{axis}") for axis in "xyz"]
     x_xyz = [hit.get(f"X_xyz_{axis}") for axis in "xyz"]
@@ -63,7 +64,10 @@ def _hbond_contacts(hit: Dict[str, Any], model: gemmi.Model,
             continue
         if not hbond_acceptors.altlocs_compatible(active_alt, atom.altloc):
             continue
-        if not hbond_acceptors.is_hbond_acceptor(cra.residue, atom, altloc=active_alt):
+        acceptor = (protonation.is_acceptor(model_index, cra.chain.name, cra.residue, atom, active_alt)
+                    if protonation is not None else
+                    hbond_acceptors.is_hbond_acceptor(cra.residue, atom, altloc=active_alt))
+        if not acceptor:
             continue
         # Resolve around the H being annotated, not around the ring centroid.
         position, code = _nearest_mark_position(ns, h_pos, mark, atom.pos)
@@ -95,13 +99,13 @@ def _context_model(structure, model_index, ns):
 def annotate_cone_hbond_context(
         hits: List[Dict[str, Any]], structure: gemmi.Structure,
         model_index: int = 0, ns: Optional[gemmi.NeighborSearch] = None,
-        min_occ: float = 0.0, max_b: float = 0.0) -> List[Dict[str, Any]]:
+        min_occ: float = 0.0, max_b: float = 0.0, protonation=None) -> List[Dict[str, Any]]:
     """Report the strongest nearby H-bond geometry for every selected H."""
     model, ns = _context_model(structure, model_index, ns)
     if model is None:
         return hits
     for hit in hits:
-        best = max(_hbond_contacts(hit, model, ns, min_occ, max_b),
+        best = max(_hbond_contacts(hit, model, ns, min_occ, max_b, protonation, model_index),
                    key=lambda item: item[4], default=None)
         if best is None:
             _set_no_competition(hit)
@@ -125,7 +129,7 @@ def annotate_cone_hbond_context(
 def annotate_explicit_hbond_context(
         hits: List[Dict[str, Any]], structure: gemmi.Structure,
         model_index: int = 0, ns: Optional[gemmi.NeighborSearch] = None,
-        min_occ: float = 0.0, max_b: float = 0.0) -> List[Dict[str, Any]]:
+        min_occ: float = 0.0, max_b: float = 0.0, protonation=None) -> List[Dict[str, Any]]:
     """Report whether an explicit H also has conventional H-bond geometry."""
     model, ns = _context_model(structure, model_index, ns)
     if model is None:
@@ -133,7 +137,7 @@ def annotate_explicit_hbond_context(
     for hit in hits:
         hit["hbond_also_hbonded"] = int(
             hit.get("H_source") != "cone_virtual"
-            and next(_hbond_contacts(hit, model, ns, min_occ, max_b), None) is not None)
+            and next(_hbond_contacts(hit, model, ns, min_occ, max_b, protonation, model_index), None) is not None)
     return hits
 
 

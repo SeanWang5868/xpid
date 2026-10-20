@@ -70,7 +70,8 @@ class ResultStreamer:
                  include_coordinates: bool = False,
                  include_sasa: bool = False,
                  include_cooperativity: bool = False,
-                 include_hbond_comp: bool = False):
+                 include_hbond_comp: bool = False,
+                 include_protonation: bool = False):
         self.output_path = output_path
         self.file_type = file_type.lower()
         self.verbose = verbose
@@ -82,6 +83,7 @@ class ResultStreamer:
         self.include_sasa = include_sasa
         self.include_cooperativity = include_cooperativity
         self.include_hbond_comp = include_hbond_comp
+        self.include_protonation = include_protonation
         self.file_handle = None
         self.csv_writer = None
         self.parquet_writer = None
@@ -281,6 +283,8 @@ class ResultStreamer:
 
     def _simple_cols(self) -> List[str]:
         def with_coordinates(cols: List[str]) -> List[str]:
+            if self.include_protonation:
+                cols = cols + [f.name for f in schema.FIELDS if f.group == "protonation"]
             if not self.include_coordinates:
                 return cols
             return cols + [col for col in COORDINATE_SIMPLE_COLS if col not in cols]
