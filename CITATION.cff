@@ -27,8 +27,8 @@ authors:
   - given-names: "Jon"
     family-names: "Agirre"
     affiliation: "York Structural Biology Laboratory, Department of Chemistry, University of York, York YO10 5DD, UK"
-version: "2.1.11"
-date-released: "2026-10-03"
+version: "2.1.13"
+date-released: "2026-10-21"
 doi: "10.5281/zenodo.22875176"
 identifiers:
   - type: doi

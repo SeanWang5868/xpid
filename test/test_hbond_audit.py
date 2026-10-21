@@ -51,6 +51,21 @@ def test_his_zero_occupancy_is_not_a_deprotonation_assignment():
     assert audit.classify_acceptor(r, r[0])[0] == "no"
 
 
+@pytest.mark.parametrize("name,atom_name", [
+    ("ALA", "N"), ("SER", "N"), ("PRO", "N"),
+    ("ASN", "ND2"), ("GLN", "NE2"), ("TRP", "NE1"),
+])
+def test_standard_nonacceptor_nitrogen_stays_excluded_with_covalent_links(name, atom_name):
+    r = residue(name, 1, [atom(atom_name, "N", [0, 0, 0])])
+    assert audit.classify_acceptor(r, r[0], special=True)[0] == "no"
+
+
+def test_neutral_lysine_microstate_is_not_overridden_by_amide_exclusion():
+    r = residue("LYS", 1, [atom("NZ", "N", [0, 0, 0])])
+    site = SimpleNamespace(status="resolved", source="propka", acceptors={"NZ": True}, reason="")
+    assert audit.classify_acceptor(r, r[0], site=site)[0] == "yes"
+
+
 def test_ph_source_and_uncertainty_are_preserved():
     r = residue("HIS", 1, [atom("ND1", "N", [0, 0, 0])])
     site = SimpleNamespace(status="resolved", source="propka", acceptors={"ND1": True}, reason="")
@@ -152,6 +167,21 @@ def test_coordinated_water_is_not_a_definite_competitor():
     core.detect_interactions_in_structure(s, "test", hbond_audit=True, diagnostics=d)
     water_records = [a for p in d["hbond_audit"]["pairs"] for a in p["acceptors"] if a["residue_name"] == "HOH"]
     assert water_records and all(a["status"] == "unknown" for a in water_records)
+
+
+def test_peptide_link_does_not_introduce_uncertain_backbone_n_competition():
+    import gemmi
+    s, d = fixture(), {}
+    nitrogen_residue = s[0][0][2]
+    nitrogen_residue.name = "SER"
+    nitrogen_residue[0].name = "N"
+    nitrogen_residue[0].element = gemmi.Element("N")
+    position = np.array(nitrogen_residue[0].pos.tolist())
+    s[0][0].add_residue(residue("ALA", 4, [atom("C", "C", position + [0, 0, 1.33])]))
+    baseline = core.detect_interactions_in_structure(s, "test")
+    assert baseline == core.detect_interactions_in_structure(s, "test", diagnostics=d, hbond_audit=True)
+    assert d["hbond_audit"]["pairs"]
+    assert not any(a["atom"] == "N" for p in d["hbond_audit"]["pairs"] for a in p["acceptors"])
 
 
 def test_sh_search_covers_hydrogen_length_plus_contact_radius():

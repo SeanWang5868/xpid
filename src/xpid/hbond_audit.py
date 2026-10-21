@@ -31,6 +31,17 @@ def classify_acceptor(residue, atom, label="", site=None, special=False):
     element, name = atom.element.name, atom.name
     if element not in {"N", "O", "S", "Se"}:
         return "no", "not_a_supported_acceptor_element", "element"
+    standard = gemmi.find_tabulated_residue(residue.name).is_amino_acid()
+    # Ordinary peptide links are inter-residue covalent connections, not a
+    # reason to promote an amide N into the uncertain-acceptor bucket. These
+    # nitrogens lack an available lone pair in the supported standard chemistry.
+    # Leave titratable amines (e.g. Lys NZ) to the assigned microstate below.
+    if element == "N":
+        if (standard and name == "N") or (residue.name, name) in {
+                ("ASN", "ND2"), ("GLN", "NE2")}:
+            return "no", "non_acceptor_nitrogen", "standard_residue"
+        if (residue.name, name) == ("TRP", "NE1"):
+            return "no", "pyrrole_nitrogen", "standard_residue"
     if special:
         return "unknown", "covalent_modification_or_metal_environment", "structure"
     if site is not None:
@@ -39,7 +50,6 @@ def classify_acceptor(residue, atom, label="", site=None, special=False):
         return ("yes" if site.acceptors.get(name, False) else "no"), "assigned_microstate", site.source
     if atom.charge > 0:
         return "unknown", "positive_formal_charge", "structure"
-    standard = gemmi.find_tabulated_residue(residue.name).is_amino_acid()
     if standard and name == "O":
         return "yes", "backbone_carbonyl", "standard_residue"
     if standard and name == "OXT":
