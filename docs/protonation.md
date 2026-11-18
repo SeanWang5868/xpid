@@ -109,6 +109,31 @@ ASP/GLU accept `deprotonated` or e.g. `protonated_OD2_trans` /
 covalent links, quarantine or the candidate clash check. An unmatched identity
 is an error; an unsafe matching override is reported as not applied.
 
+## Histidine states without pH (2.1.14, Python API)
+
+To set the state of named histidines and leave everything else as in the default
+preparation, pass `his_overrides` without `ph`:
+
+```python
+from xpid import detect
+
+states = {(0, "A", "57", "HIS", ""): "doubly_protonated",   # His+: ring is not a pi acceptor
+          (0, "A", "64", "HIS", ""): "epsilon"}             # neutral, H on NE2
+hits = detect("model.cif", h_mode=4, his_overrides=states)
+```
+
+Keys are `(model_index, chain, residue_id, "HIS", altloc)`; states are `delta`,
+`epsilon` and `doubly_protonated`. Only the named sites change: other histidines,
+other residues and termini keep the default preparation, so with no overrides the
+output is identical to 2.1.13. A His+ site loses its ring as a pi acceptor; a
+`delta`/`epsilon` site gains the matching N-H donor. An override does not bypass a
+severe clash of the placed H (the site then stays neutral without an N-H donor).
+`his_overrides` needs H mode 3, 4 or 5 and cannot be combined with `ph` (use
+`--protonation-overrides` there).
+
+`his_policy="neutral"` and `his_policy="default"` (PROPKA) are experimental and
+not validated; the default `his_policy="legacy"` is the supported setting.
+
 ## Output and validation
 
 Every pH run adds `pH`, `protonation_method`, donor state/source/pKa/protonated
