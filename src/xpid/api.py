@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Literal, Optional, Union
 from . import hydrogen_prep
 from . import detector
 from . import structure_io
-from . import protonation, protonation_pka
+from . import his_default, protonation, protonation_pka
 
 logger = logging.getLogger("xpid")
 
@@ -38,6 +38,9 @@ def detect(
     protonation_overrides: Optional[Union[str, Path]] = None,
     diagnostics: Optional[Dict[str, Any]] = None,
     hbond_audit: bool = False,
+    his_policy: str = "legacy",
+    his_ph: Optional[Union[float, str]] = "auto",
+    his_overrides: Optional[Dict[tuple, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     API entry point to run analysis on a single file from Python code.
@@ -46,7 +49,13 @@ def detect(
         raise ValueError("on_error must be 'raise' or 'empty'")
     if hbond_audit and (diagnostics is None or cone_mode != "auto" or report_xh_candidates):
         raise ValueError("hbond_audit requires diagnostics, Cone auto, and no XH-candidate export")
+    his_active = his_policy != "legacy" or bool(his_overrides)
+    if his_active and ph is not None:
+        raise ValueError("his_policy/his_overrides cannot be combined with ph; use protonation_overrides")
+    if his_active and h_mode not in {3, 4, 5}:
+        raise ValueError("his_policy/his_overrides need h_mode 3, 4 or 5")
     protonation_pka.validate_options(ph, pka_method, h_mode)
+    his_default.validate_options(his_policy, his_ph)
     if protonation_overrides is not None and ph is None:
         raise ValueError("protonation_overrides requires ph")
     path_obj = Path(file_path)
@@ -70,6 +79,12 @@ def detect(
                 prepared.report.excluded_donor_keys(), model_mode=model_mode)
             if diagnostics is not None:
                 diagnostics["protonation"] = ph_context.to_dict()
+        elif his_active and structure:
+            ph_context = his_default.prepare(
+                structure, path_obj, his_policy, his_ph, his_overrides,
+                prepared.report.excluded_donor_keys(), model_mode=model_mode)
+            if diagnostics is not None:
+                diagnostics["his_default"] = ph_context.to_dict()
 
         if not structure:
             return []
